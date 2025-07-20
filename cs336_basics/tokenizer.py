@@ -1,4 +1,4 @@
-from typing import List, BinaryIO, Optional, Dict, Tuple, DefaultDict
+from typing import List, BinaryIO, Optional, Dict, Tuple, DefaultDict, Set
 import os
 from multiprocessing import Pool
 import math
@@ -73,28 +73,30 @@ class Tokenizer:
 
     @staticmethod
     def pretokenize(
-        stream: BinaryIO, start: int, end: int
+        stream: BinaryIO,
+        chunks: List[Tuple[int, int]],
     ) -> DefaultDict[Tuple[bytes, ...], int]:
-        stream.seek(start)
-        length = end - start
-        data = stream.read(length).decode()
-        histogram: DefaultDict[str, int] = collections.defaultdict(int)
-        for token in re.finditer(Tokenizer.PAT, data):
-            histogram[token.group()] += 1
         preped_histogram: DefaultDict[Tuple[bytes, ...], int] = collections.defaultdict(
             int
         )
-        for str_token, count in histogram.items():
-            token = str_token.encode()
-            preped_histogram[tuple(token[i : i + 1] for i in range(len(token)))] = count
+        pattern = re.compile(Tokenizer.PAT)
+        for start, end in chunks:
+            stream.seek(start)
+            length = end - start
+            data = stream.read(length).decode()
+            for token in re.finditer(pattern, data):
+                token = token.group().encode()
+                preped_histogram[
+                    tuple(token[i : i + 1] for i in range(len(token)))
+                ] += 1
         return preped_histogram
 
     @staticmethod
     def pretokenize_open(
-        file_name: str | os.PathLike, start: int, end: int
+        file_name: str | os.PathLike, chunks: List[Tuple[int, int]]
     ) -> DefaultDict[Tuple[bytes, ...], int]:
         with open(file_name, "rb") as f:
-            histogram = Tokenizer.pretokenize(f, start, end)
+            histogram = Tokenizer.pretokenize(f, chunks)
         return histogram
 
     def add_token(self, token: bytes):
@@ -102,18 +104,12 @@ class Tokenizer:
         self.vocab[id] = token
         self.reverse_vocab[token] = id
 
-    def fit(
+    def get_chunk_boundaries(
         self,
         file_name: str | os.PathLike,
         num_processes: int = 1,
         verbose: bool = False,
     ):
-        """
-        Základní implementace nasplituju data podle prvního speciálního tokenu
-        Raises:
-            OSError, jelikož kontroluje délku souboru
-        """
-        # zíkskání délky souboru
         with open(file_name, "rb") as f:
             f.seek(0, os.SEEK_END)
             length = f.tell()
@@ -135,12 +131,7 @@ class Tokenizer:
         if verbose:
             print(special_token_positions[:10])
             print(len(special_token_positions))
-        """
-        Teď bych měl spustit úlohy, které pretokenizují chunky.
-        Taky je potřeba vhodně upravit pozice na chunk boundry, takže start(inclusive) a konec(exclusive)
-        Dále se vytvoří histogramy chunků
-        Histogramy se zmergujou na jeden histogram, asi sekvenčně.
-        """
+
         chunk_boundary: List[Tuple[int, int]] = []
         previous_postion: int = 0
         for start, end in special_token_positions:
@@ -148,16 +139,33 @@ class Tokenizer:
             previous_postion = end
         if special_token_positions:
             chunk_boundary.append((special_token_positions[-1][1], length))
+        if not chunk_boundary:
+            return [(0, length)]
+        return chunk_boundary
 
+    def get_pretoken_hisogram(
+        self,
+        chunk_boundary: List[Tuple[int, int]],
+        file_name: str | os.PathLike,
+        num_processes: int = 1,
+        verbose: bool = False,
+    ):
         pretoken_histogram: DefaultDict[Tuple[bytes, ...], int] = (
             collections.defaultdict(int)
         )
+        chunks_per_process = math.ceil(len(chunk_boundary) / num_processes)
         with Pool(processes=num_processes) as p:
             results = [
                 p.apply_async(
-                    func=Tokenizer.pretokenize_open, args=(file_name, start, end)
+                    func=Tokenizer.pretokenize_open,
+                    args=(
+                        file_name,
+                        chunk_boundary[
+                            i * chunks_per_process : (i + 1) * chunks_per_process
+                        ],
+                    ),
                 )
-                for (start, end) in chunk_boundary
+                for i in range(num_processes)
             ]
             for r in results:
                 hist = r.get()
@@ -166,6 +174,33 @@ class Tokenizer:
 
         if verbose:
             print(len(pretoken_histogram))
+        return pretoken_histogram
+
+    def build_vocabulary(self):
+        pass
+
+    def fit(
+        self,
+        file_name: str | os.PathLike,
+        num_processes: int = 1,
+        verbose: bool = False,
+    ):
+        """
+        Základní implementace nasplituju data podle prvního speciálního tokenu
+        Raises:
+            OSError, jelikož kontroluje délku souboru
+        """
+        # zíkskání délky souboru
+        chunk_boundary = self.get_chunk_boundaries(file_name, num_processes, verbose)
+        """
+        Teď bych měl spustit úlohy, které pretokenizují chunky.
+        Taky je potřeba vhodně upravit pozice na chunk boundry, takže start(inclusive) a konec(exclusive)
+        Dále se vytvoří histogramy chunků
+        Histogramy se zmergujou na jeden histogram, asi sekvenčně.
+        """
+        pretoken_histogram = self.get_pretoken_hisogram(
+            chunk_boundary, file_name, num_processes, verbose
+        )
         """
         Potom v cyklu dokud se nenaplní slovník, nebo dojdou nová slova, tak hledám nejpopulárnější páry tokenů a merguju tokeny.
         * Mergování, prý nejde paralelizovat
@@ -178,21 +213,31 @@ class Tokenizer:
         pair_histogram: DefaultDict[Tuple[bytes, bytes], int] = collections.defaultdict(
             int
         )
+        pair_pretoken: DefaultDict[Tuple[bytes, bytes], Set[Tuple[bytes, ...]]] = (
+            collections.defaultdict(set)
+        )
         for token, count in pretoken_histogram.items():
             for i in range(1, len(token)):
                 pair_histogram[(token[i - 1], token[i])] += count
+                pair_pretoken[(token[i - 1], token[i])].add(token)
+        if verbose:
+            print("pair histogram length: ", len(pair_histogram))
+
         while len(self.vocab) < self.vocab_size:
-            max_token = max(pair_histogram, key=lambda x: (pair_histogram.get(x), x))
+            try:
+                max_token = max(
+                    pair_histogram, key=lambda x: (pair_histogram.get(x), x)
+                )
+                # print(pair_histogram.get(max_token))
+            except ValueError:
+                return
             new_token = max_token[0] + max_token[1]
             self.add_token(new_token)
             self.merges.append(max_token)
-            new_token_histogram: DefaultDict[Tuple[bytes, ...], int] = (
-                collections.defaultdict(int)
-            )
-            for encoded_token, count in pretoken_histogram.items():
+            encoded_tokens = set(pair_pretoken[max_token])
+            for encoded_token in encoded_tokens:
                 new_encoded_token = []
                 i = 1
-                includes_newtoken = False
                 while i < len(encoded_token):
                     combined = encoded_token[i - 1] + encoded_token[i]
                     if combined == new_token:
@@ -200,7 +245,7 @@ class Tokenizer:
                         i += 2
                         # new token found need to update pair_histogram
                         # jednoduché řešení, je odstranit počty pro daný pretoken, potom znovu inkrementovat páry pretokenu -> pokud zjistime, že pretoken obsahuje nový token
-                        includes_newtoken = True
+                        # includes_newtoken = True
                     else:
                         new_encoded_token.append(encoded_token[i - 1])
                         i += 1
@@ -212,19 +257,31 @@ class Tokenizer:
                 ):
                     new_encoded_token.append(encoded_token[-1])
                 # updates pairs if new_token is included, this isnt optimal, but it was easy to code -> maybe i will improve it someday
-                if includes_newtoken:
-                    for i in range(1, len(encoded_token)):
-                        pair_histogram[
-                            (encoded_token[i - 1], encoded_token[i])
-                        ] -= count
-                    for i in range(1, len(new_encoded_token)):
-                        pair_histogram[
-                            (new_encoded_token[i - 1], new_encoded_token[i])
-                        ] += count
-
+                # if includes_newtoken:
                 new_encoded_token = tuple(new_encoded_token)
-                new_token_histogram[new_encoded_token] = count
-            pretoken_histogram = new_token_histogram
+                for i in range(1, len(encoded_token)):
+                    pair_histogram[
+                        (encoded_token[i - 1], encoded_token[i])
+                    ] -= pretoken_histogram[encoded_token]
+                    pair_pretoken[(encoded_token[i - 1], encoded_token[i])].discard(
+                        encoded_token
+                    )
+                    if pair_histogram[(encoded_token[i - 1], encoded_token[i])] <= 0:
+                        del pair_histogram[(encoded_token[i - 1], encoded_token[i])]
+                    if not pair_pretoken[(encoded_token[i - 1], encoded_token[i])]:
+                        del pair_pretoken[(encoded_token[i - 1], encoded_token[i])]
+
+                for i in range(1, len(new_encoded_token)):
+                    pair_histogram[
+                        (new_encoded_token[i - 1], new_encoded_token[i])
+                    ] += pretoken_histogram[encoded_token]
+                    pair_pretoken[(new_encoded_token[i - 1], new_encoded_token[i])].add(
+                        new_encoded_token
+                    )
+                pretoken_histogram[new_encoded_token] = pretoken_histogram[
+                    encoded_token
+                ]
+                del pretoken_histogram[encoded_token]
 
     def tranform(self):
         pass
