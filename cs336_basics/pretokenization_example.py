@@ -33,19 +33,16 @@ def find_chunk_boundaries(
         file.seek(initial_position)  # Start at boundary guess
         while True:
             mini_chunk = file.read(mini_chunk_size)  # Read a mini chunk
-
             # If EOF, this boundary should be at the end of the file
             if mini_chunk == b"":
                 chunk_boundaries[bi] = file_size
                 break
-
             # Find the special token in the mini chunk
             found_at = mini_chunk.find(split_special_token)
             if found_at != -1:
                 chunk_boundaries[bi] = initial_position + found_at
                 break
             initial_position += mini_chunk_size
-
     # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
     return sorted(set(chunk_boundaries))
 
