@@ -28,6 +28,10 @@ class Tokenizer:
         ]
         self.vocab: Dict[int, bytes] = {}
         self.reverse_vocab: Dict[bytes, int] = {}
+        for token in self.special_tokens:
+            self.add_token(token.encode())
+        for i in range(256):
+            self.add_token(i.to_bytes(1))
         self.merges: List[Tuple[bytes, bytes]] = []
 
     @staticmethod
@@ -77,8 +81,8 @@ class Tokenizer:
         histogram: DefaultDict[str, int] = collections.defaultdict(int)
         for token in re.finditer(Tokenizer.PAT, data):
             histogram[token.group()] += 1
-        preped_histogram: DefaultDict[Tuple[bytes, ...], int] = (
-            collections.defaultdict(int)
+        preped_histogram: DefaultDict[Tuple[bytes, ...], int] = collections.defaultdict(
+            int
         )
         for str_token, count in histogram.items():
             token = str_token.encode()
@@ -92,6 +96,11 @@ class Tokenizer:
         with open(file_name, "rb") as f:
             histogram = Tokenizer.pretokenize(f, start, end)
         return histogram
+
+    def add_token(self, token: bytes):
+        id = len(self.vocab)
+        self.vocab[id] = token
+        self.reverse_vocab[token] = id
 
     def fit(
         self,
@@ -158,8 +167,64 @@ class Tokenizer:
         if verbose:
             print(len(pretoken_histogram))
         """
-        Potom v cyklu dokud se nenaplní slovník, nebo dojdou nová slova, tak hledám nejpopulárnější páry tokenů a merguju tokeny
+        Potom v cyklu dokud se nenaplní slovník, nebo dojdou nová slova, tak hledám nejpopulárnější páry tokenů a merguju tokeny.
+        * Mergování, prý nejde paralelizovat
+        * důležitý je cachovat, počty párů
+
+        1. zkombinovat, dvojice otkenů na 1 -> v pretoken_histogramu
+        2. při tom je vhodné updatovat histogram párů (newtoken) = (první,druhý) -> (nultý,první)--,(první_token , durhý_token)--, (druhý_token,třetí_token)--
+        2. po tom je vhodné inkrementovat nové páry -> (nultý,newtoken)++,(newtoken,třetí)
         """
+        pair_histogram: DefaultDict[Tuple[bytes, bytes], int] = collections.defaultdict(
+            int
+        )
+        for token, count in pretoken_histogram.items():
+            for i in range(1, len(token)):
+                pair_histogram[(token[i - 1], token[i])] += count
+        while len(self.vocab) < self.vocab_size:
+            max_token = max(pair_histogram, key=lambda x: (pair_histogram.get(x), x))
+            new_token = max_token[0] + max_token[1]
+            self.add_token(new_token)
+            self.merges.append(max_token)
+            new_token_histogram: DefaultDict[Tuple[bytes, ...], int] = (
+                collections.defaultdict(int)
+            )
+            for encoded_token, count in pretoken_histogram.items():
+                new_encoded_token = []
+                i = 1
+                includes_newtoken = False
+                while i < len(encoded_token):
+                    combined = encoded_token[i - 1] + encoded_token[i]
+                    if combined == new_token:
+                        new_encoded_token.append(combined)
+                        i += 2
+                        # new token found need to update pair_histogram
+                        # jednoduché řešení, je odstranit počty pro daný pretoken, potom znovu inkrementovat páry pretokenu -> pokud zjistime, že pretoken obsahuje nový token
+                        includes_newtoken = True
+                    else:
+                        new_encoded_token.append(encoded_token[i - 1])
+                        i += 1
+                # print(i,len(encoded_token),encoded_token,new_encoded_token)
+                if (
+                    i == len(encoded_token)
+                    or not new_encoded_token
+                    or new_encoded_token[-1] != new_token
+                ):
+                    new_encoded_token.append(encoded_token[-1])
+                # updates pairs if new_token is included, this isnt optimal, but it was easy to code -> maybe i will improve it someday
+                if includes_newtoken:
+                    for i in range(1, len(encoded_token)):
+                        pair_histogram[
+                            (encoded_token[i - 1], encoded_token[i])
+                        ] -= count
+                    for i in range(1, len(new_encoded_token)):
+                        pair_histogram[
+                            (new_encoded_token[i - 1], new_encoded_token[i])
+                        ] += count
+
+                new_encoded_token = tuple(new_encoded_token)
+                new_token_histogram[new_encoded_token] = count
+            pretoken_histogram = new_token_histogram
 
     def tranform(self):
         pass
