@@ -1,4 +1,14 @@
-from typing import List, BinaryIO, Optional, Dict, Tuple, DefaultDict, Set
+from typing import (
+    Iterable,
+    Iterator,
+    List,
+    BinaryIO,
+    Optional,
+    Dict,
+    Tuple,
+    DefaultDict,
+    Set,
+)
 import os
 from multiprocessing import Pool
 import math
@@ -11,28 +21,37 @@ class Tokenizer:
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
     def __init__(
-        self, vocab_size: int, special_tokens: list[str], read_size: int = 4096
+        self,
+        vocab: Optional[Dict[int, bytes]] = None,
+        merges: Optional[List[Tuple[bytes, bytes]]] = None,
+        special_tokens: list[str] = None,
     ):
         """
         Asi důvod read_size 4096 -> je, že to je velikost stránky
         * mergujou se special tokeny, nebo vždy jsou samotný
         """
-        self.vocab_size = vocab_size
-        self.special_tokens = special_tokens
-        if not self.special_tokens:
-            raise ValueError(
-                "Special tokens should at least contain 1 token, which is assumed to be end of document!"
-            )
+        self.special_tokens = special_tokens if special_tokens else []
         self.encoded_special_tokens: List[bytes] = [
             token.encode() for token in self.special_tokens
         ]
-        self.vocab: Dict[int, bytes] = {}
-        self.reverse_vocab: Dict[bytes, int] = {}
-        for token in self.special_tokens:
-            self.add_token(token.encode())
-        for i in range(256):
-            self.add_token(i.to_bytes(1))
-        self.merges: List[Tuple[bytes, bytes]] = []
+        self.encoded_special_tokens.sort(key=len,reverse=True)
+        self.special_tokens.sort(key=len,reverse=True)
+        if not vocab:
+            self.vocab: Dict[int, bytes] = {}
+            self.reverse_vocab: Dict[bytes, int] = {}
+            for token in self.special_tokens:
+                self.add_token(token.encode())
+            for i in range(256):
+                self.add_token(i.to_bytes(1))
+        else:
+            self.vocab = vocab
+            self.reverse_vocab: Dict[bytes, int] = {}
+            for id, token in self.vocab.items():
+                self.reverse_vocab[token] = id
+            for token in self.encoded_special_tokens:
+                if token not in self.reverse_vocab:
+                    self.add_token(token)
+        self.merges: List[Tuple[bytes, bytes]] = merges if merges else []
 
     @staticmethod
     def find_special_tokens(
@@ -48,7 +67,8 @@ class Tokenizer:
         stream.seek(offset)
         longest_token = max(special_tokens, key=len)
         data = stream.read(read_size + len(longest_token) - 1)
-        pattern = b"|".join(special_tokens)
+        escaped_special_tokens = [re.escape(token) for token in special_tokens]
+        pattern = b"|".join(escaped_special_tokens)
         for m in re.finditer(pattern, data):
             if m.start() < read_size:
                 positions.append((m.start() + offset, m.end() + offset))
@@ -109,12 +129,16 @@ class Tokenizer:
         file_name: str | os.PathLike,
         num_processes: int = 1,
         verbose: bool = False,
+        read_size: Optional[int] = None,
     ):
         with open(file_name, "rb") as f:
             f.seek(0, os.SEEK_END)
             length = f.tell()
-
-        offset = math.ceil(length / num_processes)
+        if not read_size:
+            offset = math.ceil(length / num_processes)
+        else:
+            offset = read_size
+        read_chunks = math.ceil(length / offset)
         special_token_positions: List[Tuple[int, int]] = []
         with Pool(processes=num_processes) as p:
             results = [
@@ -122,7 +146,7 @@ class Tokenizer:
                     func=Tokenizer.find_special_tokens_open,
                     args=(file_name, i * offset, offset, self.encoded_special_tokens),
                 )
-                for i in range(num_processes)
+                for i in range(read_chunks)
             ]
             for r in results:
                 positions = r.get()
@@ -176,14 +200,13 @@ class Tokenizer:
             print(len(pretoken_histogram))
         return pretoken_histogram
 
-    def build_vocabulary(self):
-        pass
-
     def fit(
         self,
         file_name: str | os.PathLike,
+        vocab_size: int,
         num_processes: int = 1,
         verbose: bool = False,
+        read_size: Optional[int] = None,
     ):
         """
         Základní implementace nasplituju data podle prvního speciálního tokenu
@@ -191,7 +214,9 @@ class Tokenizer:
             OSError, jelikož kontroluje délku souboru
         """
         # zíkskání délky souboru
-        chunk_boundary = self.get_chunk_boundaries(file_name, num_processes, verbose)
+        chunk_boundary = self.get_chunk_boundaries(
+            file_name, num_processes, verbose, read_size
+        )
         """
         Teď bych měl spustit úlohy, které pretokenizují chunky.
         Taky je potřeba vhodně upravit pozice na chunk boundry, takže start(inclusive) a konec(exclusive)
@@ -223,7 +248,7 @@ class Tokenizer:
         if verbose:
             print("pair histogram length: ", len(pair_histogram))
 
-        while len(self.vocab) < self.vocab_size:
+        while len(self.vocab) < vocab_size:
             try:
                 max_token = max(
                     pair_histogram, key=lambda x: (pair_histogram.get(x), x)
@@ -283,5 +308,72 @@ class Tokenizer:
                 ]
                 del pretoken_histogram[encoded_token]
 
-    def tranform(self):
+    @classmethod
+    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
         pass
+
+    def encode_chunk(self, text: str, pattern: re.Pattern[str]):
+        for pretoken_match in re.finditer(pattern, text):
+            pretoken = pretoken_match.group().encode()
+            pretoken = tuple(pretoken[i : i + 1] for i in range(len(pretoken)))
+            for merge in self.merges:
+                new_encoded_token = []
+                i = 1
+                new_token = merge[0] + merge[1]
+                while i < len(pretoken):
+                    combined = pretoken[i - 1] + pretoken[i]
+                    if combined == new_token:
+                        new_encoded_token.append(combined)
+                        i += 2
+                    else:
+                        new_encoded_token.append(pretoken[i - 1])
+                        i += 1
+                if (
+                    i == len(pretoken)
+                    or not new_encoded_token
+                    or new_encoded_token[-1] != new_token
+                ):
+                    new_encoded_token.append(pretoken[-1])
+                pretoken = tuple(new_encoded_token)
+            for token in pretoken:
+                yield self.reverse_vocab[token]
+
+    def encode(self, text: str) -> list[int]:
+        """ """
+        encoded_text = text.encode()
+        special_token_positions: List[Tuple[int, int, int]] = []
+        if self.encoded_special_tokens:
+            escaped_special_tokens = [
+                re.escape(token) for token in self.encoded_special_tokens
+            ]
+            pattern = b"|".join(escaped_special_tokens)
+            # start,end,id
+            for m in re.finditer(pattern, encoded_text):
+                special_token_positions.append(
+                    (m.start(), m.end(), self.reverse_vocab[m.group()])
+                )
+        ids: List[int] = []
+        pretoken_pattern = re.compile(Tokenizer.PAT)
+        start = 0
+        for special_info in special_token_positions:
+            for id in self.encode_chunk(
+                encoded_text[start : special_info[0]].decode(), pretoken_pattern
+            ):
+                ids.append(id)
+            ids.append(special_info[2])
+            start = special_info[1]
+        for id in self.encode_chunk(encoded_text[start:].decode(), pretoken_pattern):
+            ids.append(id)
+        return ids
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        for text in iterable:
+            ids = self.encode(text)
+            for id in ids:
+                yield id
+
+    def decode(self, ids: list[int]) -> str:
+        decoded = bytearray()
+        for id in ids:
+            decoded.extend(self.vocab[id])
+        return decoded.decode(errors="replace")
