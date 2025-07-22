@@ -14,6 +14,52 @@ from multiprocessing import Pool
 import math
 import regex as re
 import collections
+from dataclasses import dataclass
+import argparse
+from functools import lru_cache
+
+
+@dataclass
+class TokenizerArguments:
+    # cesta k trenovacím datům, pokud není none, tak se natrénuje tokenizer
+    special_tokens: List[str]
+    vocab_size: Optional[int]
+    train_path: Optional[str] = None
+    # vocab_path
+    input_vocab_path: Optional[str] = None
+    input_merge_path: Optional[str] = None
+    output_vocab_path: Optional[str] = None
+    output_merge_path: Optional[str] = None
+    # data, která se transformují
+    decode: bool = False
+    data_path: Optional[str] = None
+    data_ouptut_path: Optional[str] = None
+
+
+def parse_tokenizer_arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-x", "--vocab_size", type=int)
+    parser.add_argument("-t", "--train_path")
+    parser.add_argument("-v", "--input_vocab_path")
+    parser.add_argument("-V", "--output_vocab_path")
+    parser.add_argument("-m", "--input_merge_path")
+    parser.add_argument("-M", "--output_merge_path")
+    parser.add_argument("-d", "--data_path")
+    parser.add_argument("-o", "--data_ouptut_path")
+    parser.add_argument("-s", "--special_tokens", nargs="*")
+    parser.add_argument("-y", "--decode", action="store_true")
+    args = parser.parse_args()
+    arguments = TokenizerArguments(**vars(args))
+    if arguments.train_path:
+        if (arguments.input_vocab_path and not arguments.input_merge_path) or (
+            not arguments.input_vocab_path and arguments.input_merge_path
+        ):
+            raise ValueError("Need input vocab and merges!")
+        if (arguments.output_vocab_path and not arguments.output_merge_path) or (
+            not arguments.output_vocab_path and arguments.output_merge_path
+        ):
+            raise ValueError("Need output vocab and merges!")
+    return arguments
 
 
 class Tokenizer:
@@ -34,8 +80,8 @@ class Tokenizer:
         self.encoded_special_tokens: List[bytes] = [
             token.encode() for token in self.special_tokens
         ]
-        self.encoded_special_tokens.sort(key=len,reverse=True)
-        self.special_tokens.sort(key=len,reverse=True)
+        self.encoded_special_tokens.sort(key=len, reverse=True)
+        self.special_tokens.sort(key=len, reverse=True)
         if not vocab:
             self.vocab: Dict[int, bytes] = {}
             self.reverse_vocab: Dict[bytes, int] = {}
@@ -134,6 +180,9 @@ class Tokenizer:
         with open(file_name, "rb") as f:
             f.seek(0, os.SEEK_END)
             length = f.tell()
+        if not self.special_tokens:
+            return [(0, length)], []
+
         if not read_size:
             offset = math.ceil(length / num_processes)
         else:
@@ -164,8 +213,8 @@ class Tokenizer:
         if special_token_positions:
             chunk_boundary.append((special_token_positions[-1][1], length))
         if not chunk_boundary:
-            return [(0, length)]
-        return chunk_boundary
+            return [(0, length)], special_token_positions
+        return chunk_boundary, special_token_positions
 
     def get_pretoken_hisogram(
         self,
@@ -214,7 +263,7 @@ class Tokenizer:
             OSError, jelikož kontroluje délku souboru
         """
         # zíkskání délky souboru
-        chunk_boundary = self.get_chunk_boundaries(
+        chunk_boundary, _ = self.get_chunk_boundaries(
             file_name, num_processes, verbose, read_size
         )
         """
@@ -308,33 +357,153 @@ class Tokenizer:
                 ]
                 del pretoken_histogram[encoded_token]
 
+    def to_file(self, vocab_filepath: str, merges_filepath: str):
+        """
+        Uloží vocab a merges_filepath
+        Formát mergů (length,token,length,token)*
+        Formát vocabulary (length,token,id)*
+        Raises
+            OSError
+        """
+        with open(vocab_filepath, "wb") as vocab_file:
+            for id, token in self.vocab.items():
+                word = bytearray()
+                word.extend(len(token).to_bytes(2))
+                word.extend(token)
+                word.extend(id.to_bytes(2))
+                vocab_file.write(word)
+
+        with open(merges_filepath, "wb") as merges_file:
+            for a, b in self.merges:
+                pair = bytearray()
+                pair.extend(len(a).to_bytes(2))
+                pair.extend(a)
+                pair.extend(len(b).to_bytes(2))
+                pair.extend(b)
+                merges_file.write(pair)
+
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
-        pass
+        """
+        Načte tokenizer z souboru
+        """
+        vocab: Dict[int, bytes] = {}
+        with open(vocab_filepath, "rb") as vocab_file:
+            while True:
+                token_length_bytes = vocab_file.read(2)
+                if not token_length_bytes:
+                    break
+                token_length = int.from_bytes(token_length_bytes)
+                token = vocab_file.read(token_length)
+                if not token:
+                    break
+                id_bytes = vocab_file.read(2)
+                if not id_bytes:
+                    break
+                id = int.from_bytes(id_bytes)
+                vocab[id] = token
+
+        merges: List[Tuple[bytes, bytes]] = []
+        with open(merges_filepath, "rb") as merges_file:
+            while True:
+                a_length_bytes = merges_file.read(2)
+                if not a_length_bytes:
+                    break
+                a_length = int.from_bytes(a_length_bytes)
+                a = merges_file.read(a_length)
+                if not a:
+                    break
+                b_length_bytes = merges_file.read(2)
+                if not b_length_bytes:
+                    break
+                b_length = int.from_bytes(b_length_bytes)
+                b = merges_file.read(b_length)
+                if not b:
+                    break
+                merges.append((a, b))
+        return Tokenizer(vocab, merges, special_tokens)
+
+    def encode_to_stream(
+        self,
+        input_path: str,
+        output_path: str,
+        read_size: int = None,
+        num_processes: int = 1,
+    ):
+        """
+        Dostane input a output stream a tam uloží zakódovaná data
+        Raises:
+            OSError
+        """
+        chunk_boundaries, special_token_positions = self.get_chunk_boundaries(
+            input_path, read_size=read_size, num_processes=num_processes
+        )
+        pretoken_pattern = re.compile(Tokenizer.PAT)
+        with open(input_path, "rb") as input, open(output_path, "wb") as output:
+            for i in range(len(chunk_boundaries)):
+                start_chunk, end_chunk = chunk_boundaries[i]
+                chunk_length = end_chunk - start_chunk
+                input.seek(start_chunk)
+                chunk = input.read(chunk_length).decode()
+                for id in self.encode_chunk(chunk, pretoken_pattern):
+                    output.write(id.to_bytes(2))
+                if i < len(special_token_positions):
+                    start_token, end_token = special_token_positions[i]
+                    token_length = end_token - start_token
+                    token = input.read(token_length)
+                    output.write(self.reverse_vocab[token].to_bytes(2))
+
+    def decode_to_stream(
+        self,
+        input_path: str,
+        output_path: str,
+        read_size: int = None,
+    ):
+        if read_size % 2 == 1:
+            raise ValueError("Read size should be multiple of 2!")
+
+        with (
+            open(input_path, "rb") as input,
+            open(output_path, "w", encoding="utf-8") as ouput,
+        ):
+            while True:
+                chunk = input.read(read_size)
+                if not chunk:
+                    break
+                chunk_bytes = bytearray()
+                for i in range(0, len(chunk), 2):
+                    id = int.from_bytes(chunk[i : i + 2])
+                    chunk_bytes.extend(self.vocab[id])
+                ouput.write(chunk_bytes.decode(errors="replace"))
+
+    @lru_cache(maxsize=100000)
+    def pretoken_to_tokens(self, pretoken: bytes):
+        pretoken = tuple(pretoken[i : i + 1] for i in range(len(pretoken)))
+        for merge in self.merges:
+            new_encoded_token = []
+            i = 1
+            new_token = merge[0] + merge[1]
+            while i < len(pretoken):
+                combined = pretoken[i - 1] + pretoken[i]
+                if combined == new_token:
+                    new_encoded_token.append(combined)
+                    i += 2
+                else:
+                    new_encoded_token.append(pretoken[i - 1])
+                    i += 1
+            if (
+                i == len(pretoken)
+                or not new_encoded_token
+                or new_encoded_token[-1] != new_token
+            ):
+                new_encoded_token.append(pretoken[-1])
+            pretoken = tuple(new_encoded_token)
+        return pretoken
 
     def encode_chunk(self, text: str, pattern: re.Pattern[str]):
         for pretoken_match in re.finditer(pattern, text):
             pretoken = pretoken_match.group().encode()
-            pretoken = tuple(pretoken[i : i + 1] for i in range(len(pretoken)))
-            for merge in self.merges:
-                new_encoded_token = []
-                i = 1
-                new_token = merge[0] + merge[1]
-                while i < len(pretoken):
-                    combined = pretoken[i - 1] + pretoken[i]
-                    if combined == new_token:
-                        new_encoded_token.append(combined)
-                        i += 2
-                    else:
-                        new_encoded_token.append(pretoken[i - 1])
-                        i += 1
-                if (
-                    i == len(pretoken)
-                    or not new_encoded_token
-                    or new_encoded_token[-1] != new_token
-                ):
-                    new_encoded_token.append(pretoken[-1])
-                pretoken = tuple(new_encoded_token)
+            pretoken = self.pretoken_to_tokens(pretoken)
             for token in pretoken:
                 yield self.reverse_vocab[token]
 
