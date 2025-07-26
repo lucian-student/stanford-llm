@@ -8,7 +8,7 @@ from jaxtyping import Float, Int
 import numpy.typing as npt
 import torch
 from torch import Tensor
-from cs336_basics import Tokenizer, Linear,Embeding
+from cs336_basics import Tokenizer, Linear, Embeding, RMSNorm
 
 
 def run_linear(
@@ -54,7 +54,7 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
 
-    embedding = Embeding(num_embeddings=vocab_size,embedding_dim=d_model)
+    embedding = Embeding(num_embeddings=vocab_size, embedding_dim=d_model)
     with torch.no_grad():
         embedding.Embeddings.copy_(weights)
     return embedding(token_ids)
@@ -384,7 +384,10 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
-    raise NotImplementedError
+    rmsnorm = RMSNorm(d_model=d_model, eps=eps)
+    with torch.no_grad():
+        rmsnorm.gain.copy_(weights)
+    return rmsnorm(in_features)
 
 
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:

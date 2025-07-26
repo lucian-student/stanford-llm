@@ -1,5 +1,5 @@
 import torch
-from einops import einsum
+from einops import einsum, reduce,rearrange
 import math
 from jaxtyping import Float
 
@@ -52,9 +52,11 @@ class Embeding(torch.nn.Module):
         self.Embeddings = torch.nn.Parameter(
             torch.zeros((num_embeddings, embedding_dim), dtype=dtype, device=device)
         )
-        torch.nn.init.trunc_normal_(self.Embeddings,mean=0,std=1,a=-3,b=3,generator=generator)
-    
-    def forward(self,x:Float[torch.Tensor,"..."]):
+        torch.nn.init.trunc_normal_(
+            self.Embeddings, mean=0, std=1, a=-3, b=3, generator=generator
+        )
+
+    def forward(self, x: Float[torch.Tensor, "..."]):
         """
         Mám (vocab_size embedding_dim)
         Vstup:
@@ -62,3 +64,29 @@ class Embeding(torch.nn.Module):
         """
         return self.Embeddings[x]
 
+
+class RMSNorm(torch.nn.Module):
+
+    def __init__(
+        self,
+        d_model: int,
+        eps: float = 1e-5,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.eps = eps
+        self.gain = torch.nn.Parameter(
+            torch.ones(size=(self.d_model,), device=device, dtype=dtype)
+        )
+
+    def forward(self, x: Float[torch.Tensor, "... d_model"]):
+        dtype = x.dtype
+        casted = x.to(torch.float32)
+        mean_squared = (
+            (1 / self.d_model) * reduce(casted**2, "... d_model -> ...", "sum")
+        ) + self.eps
+        res = casted * self.gain
+        res = res / rearrange(torch.sqrt(mean_squared),"... -> ... 1")
+        return res.to(dtype)
