@@ -3,6 +3,7 @@ from einops import einsum
 import math
 from jaxtyping import Float
 
+
 class Linear(torch.nn.Module):
 
     def __init__(
@@ -36,7 +37,28 @@ class Linear(torch.nn.Module):
             "... in_features, out_features in_features -> ... out_features",
         )
 
+
 class Embeding(torch.nn.Module):
 
-    def __init__(self, ):
+    def __init__(
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        generator: torch.Generator | None = None,
+    ):
         super().__init__()
+        self.Embeddings = torch.nn.Parameter(
+            torch.zeros((num_embeddings, embedding_dim), dtype=dtype, device=device)
+        )
+        torch.nn.init.trunc_normal_(self.Embeddings,mean=0,std=1,a=-3,b=3,generator=generator)
+    
+    def forward(self,x:Float[torch.Tensor,"..."]):
+        """
+        Mám (vocab_size embedding_dim)
+        Vstup:
+        ... sequence_length
+        """
+        return self.Embeddings[x]
+
