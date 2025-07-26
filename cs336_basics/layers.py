@@ -1,5 +1,5 @@
 import torch
-from einops import einsum, reduce,rearrange
+from einops import einsum, reduce, rearrange
 import math
 from jaxtyping import Float
 
@@ -88,5 +88,55 @@ class RMSNorm(torch.nn.Module):
             (1 / self.d_model) * reduce(casted**2, "... d_model -> ...", "sum")
         ) + self.eps
         res = casted * self.gain
-        res = res / rearrange(torch.sqrt(mean_squared),"... -> ... 1")
+        res = res / rearrange(torch.sqrt(mean_squared), "... -> ... 1")
         return res.to(dtype)
+
+
+class SiLU(torch.nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: Float[torch.Tensor, "..."]):
+        return torch.nn.functional.sigmoid(x) * x
+
+
+class SwiGLU(torch.nn.Module):
+
+    def __init__(
+        self,
+        d_model: int,
+        d_ff:int,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+        generator: torch.Generator | None = None,
+    ):
+        super().__init__()
+        self.W1 = Linear(
+            in_features=d_model,
+            out_features=d_ff,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        self.W3 = Linear(
+            in_features=d_model,
+            out_features=d_ff,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        # ... d_ff
+        self.W2 = Linear(
+            in_features=d_ff,
+            out_features=d_model,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        self.silu = SiLU()
+
+    def forward(
+        self, x: Float[torch.Tensor, "... d_model"]
+    ) -> Float[torch.Tensor, "... d_model"]:
+        return self.W2(self.silu(self.W1(x)) * self.W3(x))
