@@ -149,8 +149,8 @@ class RoPE(torch.nn.Module):
         """
         Bacha na k nevim, co je to za dtype -> mozna to killne celej performance idk
         """
-        k = torch.arange(d_k // 2,dtype=torch.float32, device=device)
-        self.theta  = 1.0 / (theta ** (2 * k / d_k))
+        k = torch.arange(d_k // 2, dtype=torch.float32, device=device)
+        self.theta = 1.0 / (theta ** (2 * k / d_k))
 
     def forward(
         self,
@@ -188,6 +188,12 @@ class RoPE(torch.nn.Module):
         return res
 
 
+def softmax(x: Float[torch.Tensor, "..."], dim: int):
+    x_max = x.max(dim=dim, keepdim=True)[0]
+    x_exp = torch.exp(x - x_max)
+    return x_exp / torch.sum(x_exp, dim=dim, keepdim=True)
+
+
 class Softmax(torch.nn.Module):
 
     def __init__(self, dim: int):
@@ -195,6 +201,28 @@ class Softmax(torch.nn.Module):
         self.dim = dim
 
     def forward(self, x: Float[torch.Tensor, "..."]) -> Float[torch.Tensor, "..."]:
-        x_max = x.max(dim=self.dim, keepdim=True)[0]
-        x_exp = torch.exp(x - x_max)
-        return x_exp / torch.sum(x_exp, dim=self.dim, keepdim=True)
+        return softmax(x, self.dim)
+
+
+def scaled_dot_product_attention(
+    Q: Float[torch.Tensor, "... queries d_k"],
+    K: Float[torch.Tensor, "... keys d_k"],
+    V: Float[torch.Tensor, "... values d_v"],
+    mask: Float[torch.Tensor, "queries keys"] | None = None,
+):
+    """
+    Q = X W_q (seq_d_k)
+    K = X W_k (seq d_k)
+    ?softmax(Q K^T) -> mělibychom získat váhy pro každej vektor n * n
+    """
+    QK = einsum(Q, K, " ... queries d_k, ... keys d_k -> ... queries keys") / math.sqrt(
+        K.size()[-1]
+    )
+    """
+    Proč - nekonečno umožňuje maskovat chtělo by to prozkoumat gradient
+    """
+    if mask is not None:
+        QK = torch.where(mask, QK, -torch.inf)
+    soft = softmax(QK, dim=-1)
+    attention = einsum(soft, V, "... queries values, ... values d_v -> ... queries d_v")
+    return attention
