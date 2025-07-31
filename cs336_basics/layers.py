@@ -106,7 +106,7 @@ class SwiGLU(torch.nn.Module):
     def __init__(
         self,
         d_model: int,
-        d_ff:int,
+        d_ff: int,
         dtype: torch.dtype | None = None,
         device: torch.device | None = None,
         generator: torch.Generator | None = None,
@@ -140,3 +140,61 @@ class SwiGLU(torch.nn.Module):
         self, x: Float[torch.Tensor, "... d_model"]
     ) -> Float[torch.Tensor, "... d_model"]:
         return self.W2(self.silu(self.W1(x)) * self.W3(x))
+
+
+class RoPE(torch.nn.Module):
+
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+        super().__init__()
+        """
+        Bacha na k nevim, co je to za dtype -> mozna to killne celej performance idk
+        """
+        k = torch.arange(d_k // 2,dtype=torch.float32, device=device)
+        self.theta  = 1.0 / (theta ** (2 * k / d_k))
+
+    def forward(
+        self,
+        x: Float[torch.Tensor, "... seq_len d_k"],
+        token_positions: Float[torch.Tensor, "... seq_len"],
+    ) -> Float[torch.Tensor, "... seq_len d_k"]:
+        """
+        Mame d * d matici, kde mám vícekrát rotační matici ve 2d
+        Vstup:
+            * obvykle vstup bude Query,Key
+            * délka sekvence n, velikost batche b, každý token má e složek(velikost embeddingu), b n e po tranformaci na Query e d_q -> b n d_q
+            * následně potřebujeme zrotovat všechny řádky všech matic pomocí d_q, d_q matice, ale je potřeba pamatovat, že pozice tokenu ve větě hraje roli
+        Výstup
+        """
+        """
+        Vypadá, že nechápu einsum, protože se automaticky neprovedla transpozice -> možná je to kvůli tomu, že matice je čtvercová
+        """
+        position_preped = rearrange(token_positions, " ... -> ... 1")
+        angle = position_preped * self.theta
+        R_cos = torch.cos(angle).unsqueeze(-1)
+        R_sin = torch.sin(angle).unsqueeze(-1)
+        R_final = rearrange(
+            torch.stack([R_cos, -R_sin, R_sin, R_cos], dim=-1).squeeze(-2),
+            " ... seq dk_2 (x y) -> ... seq dk_2 y x",
+            x=2,
+            y=2,
+        )
+        X_preped = rearrange(x, "... seq ( dk_2 y ) -> ... seq dk_2 1 y ", y=2)
+        preres = einsum(
+            X_preped,
+            R_final,
+            " ... seq dk_2 x1 y, ... seq dk_2 y x -> ... seq dk_2 x1 x",
+        )
+        res = rearrange(preres, "... seq dk_2 x1 x -> ... seq (dk_2 x1 x)")
+        return res
+
+
+class Softmax(torch.nn.Module):
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, x: Float[torch.Tensor, "..."]) -> Float[torch.Tensor, "..."]:
+        x_max = x.max(dim=self.dim, keepdim=True)[0]
+        x_exp = torch.exp(x - x_max)
+        return x_exp / torch.sum(x_exp, dim=self.dim, keepdim=True)
