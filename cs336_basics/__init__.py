@@ -13,5 +13,6 @@ from cs336_basics.layers import (
     scaled_dot_product_attention,
     RoPE,
     MultiheadAttention,
-    TranformerBlock
+    TranformerBlock,
+    TransformerLM
 )

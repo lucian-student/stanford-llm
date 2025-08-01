@@ -385,11 +385,61 @@ class TranformerBlock(torch.nn.Module):
     def forward(
         self, x: Float[torch.Tensor, "... seq d_model"]
     ) -> Float[torch.Tensor, "... seq d_model"]:
+        """
+        Pozor, nevím jestli se nemají pozice nějak měnit, nebo můžou být takhle fixně
+        """
         dtype = x.dtype
         device = x.device
         seq = x.shape[-2]
-        #nevim jestli to takhle stačí
         positions = torch.arange(seq, dtype=dtype, device=device)
         x = x + self.multihead_attention(self.norm1(x), positions)
         x = x + self.ff(self.norm2(x))
+        return x
+
+
+class TransformerLM(torch.nn.Module):
+
+    def __init__(
+        self,
+        vocab_size: int,
+        context_length: int,
+        num_layers: int,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        rope_theta: float,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+    ):
+        super().__init__()
+        self.embedding = Embeding(
+            num_embeddings=vocab_size, embedding_dim=d_model, dtype=dtype, device=device
+        )
+        self.blocks = torch.nn.ModuleList(
+            [
+                TranformerBlock(
+                    d_model=d_model,
+                    num_heads=num_heads,
+                    d_ff=d_ff,
+                    theta=rope_theta,
+                    max_seq_len=context_length,
+                    dtype=dtype,
+                    device=device,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+        self.norm = RMSNorm(d_model=d_model, device=device, dtype=dtype)
+        self.output_embedding = Linear(
+            in_features=d_model, out_features=vocab_size, device=device, dtype=dtype
+        )
+
+    def forward(
+        self, x: Int[torch.Tensor, "... seq"]
+    ) -> Float[torch.Tensor, "... seq vocab_size"]:
+        x = self.embedding(x)
+        for i in range(len(self.blocks)):
+            x = self.blocks[i](x)
+        x = self.norm(x)
+        x = self.output_embedding(x)
         return x

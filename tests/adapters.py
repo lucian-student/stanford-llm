@@ -20,6 +20,7 @@ from cs336_basics import (
     scaled_dot_product_attention,
     MultiheadAttention,
     TranformerBlock,
+    TransformerLM,
 )
 from einops import rearrange
 
@@ -454,7 +455,44 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    lm = TransformerLM(
+        vocab_size=vocab_size,
+        context_length=context_length,
+        num_layers=num_layers,
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        rope_theta=rope_theta,
+    )
+    with torch.no_grad():
+        lm.embedding.Embeddings.copy_(weights["token_embeddings.weight"])
+        for i in range(num_layers):
+            W_combined = rearrange(
+                torch.stack(
+                    [
+                        weights[f"layers.{i}.attn.q_proj.weight"],
+                        weights[f"layers.{i}.attn.k_proj.weight"],
+                        weights[f"layers.{i}.attn.v_proj.weight"],
+                    ],
+                    dim=0,
+                ),
+                "matrices x y -> (matrices x) y",
+            )
+            lm.blocks[i].multihead_attention.W_combined.W.copy_(W_combined)
+            lm.blocks[i].multihead_attention.W_output.W.copy_(
+                weights[f"layers.{i}.attn.output_proj.weight"]
+            )
+            lm.blocks[i].norm1.gain.copy_(weights[f"layers.{i}.ln1.weight"])
+
+            lm.blocks[i].ff.W1.W.copy_(weights[f"layers.{i}.ffn.w1.weight"])
+            lm.blocks[i].ff.W2.W.copy_(weights[f"layers.{i}.ffn.w2.weight"])
+            lm.blocks[i].ff.W3.W.copy_(weights[f"layers.{i}.ffn.w3.weight"])
+            lm.blocks[i].norm2.gain.copy_(weights[f"layers.{i}.ln2.weight"])
+            
+        lm.norm.gain.copy_(weights["ln_final.weight"])
+        lm.output_embedding.W.copy_(weights["lm_head.weight"])
+
+    return lm(in_indices)
 
 
 def run_rmsnorm(
