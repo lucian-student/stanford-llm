@@ -19,6 +19,7 @@ from cs336_basics import (
     RoPE,
     scaled_dot_product_attention,
     MultiheadAttention,
+    TranformerBlock,
 )
 from einops import rearrange
 
@@ -161,12 +162,12 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    #print("d_model: ", d_model, "num_head: ", num_heads)
-    #print("in_features: ", in_features.shape)
-    #print("W_q: ", q_proj_weight.shape)
-    #print("W_k: ", k_proj_weight.shape)
-    #print("W_v: ", v_proj_weight.shape)
-    #print("W_o: ", o_proj_weight.shape)
+    # print("d_model: ", d_model, "num_head: ", num_heads)
+    # print("in_features: ", in_features.shape)
+    # print("W_q: ", q_proj_weight.shape)
+    # print("W_k: ", k_proj_weight.shape)
+    # print("W_v: ", v_proj_weight.shape)
+    # print("W_o: ", o_proj_weight.shape)
     multi_attention = MultiheadAttention(d_model=d_model, num_heads=num_heads)
     with torch.no_grad():
         W_combined = rearrange(
@@ -342,7 +343,36 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    transformer_block = TranformerBlock(
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        theta=theta,
+        max_seq_len=max_seq_len,
+    )
+    with torch.no_grad():
+        W_combined = rearrange(
+            torch.stack(
+                [
+                    weights["attn.q_proj.weight"],
+                    weights["attn.k_proj.weight"],
+                    weights["attn.v_proj.weight"],
+                ],
+                dim=0,
+            ),
+            "matrices x y -> (matrices x) y",
+        )
+        transformer_block.multihead_attention.W_combined.W.copy_(W_combined)
+        transformer_block.multihead_attention.W_output.W.copy_(
+            weights["attn.output_proj.weight"]
+        )
+        transformer_block.norm1.gain.copy_(weights["ln1.weight"])
+
+        transformer_block.ff.W1.W.copy_(weights["ffn.w1.weight"])
+        transformer_block.ff.W2.W.copy_(weights["ffn.w2.weight"])
+        transformer_block.ff.W3.W.copy_(weights["ffn.w3.weight"])
+        transformer_block.norm2.gain.copy_(weights["ln2.weight"])
+    return transformer_block(in_features)
 
 
 def run_transformer_lm(

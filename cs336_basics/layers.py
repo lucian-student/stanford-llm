@@ -147,12 +147,19 @@ class SwiGLU(torch.nn.Module):
 
 class RoPE(torch.nn.Module):
 
-    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+    def __init__(
+        self,
+        theta: float,
+        d_k: int,
+        max_seq_len: int,
+        dtype: torch.dtype | None = None,
+        device=None,
+    ):
         super().__init__()
         """
         Bacha na k nevim, co je to za dtype -> mozna to killne celej performance idk
         """
-        k = torch.arange(d_k // 2, dtype=torch.float32, device=device)
+        k = torch.arange(d_k // 2, dtype=dtype, device=device)
         self.theta = 1.0 / (theta ** (2 * k / d_k))
 
     def forward(
@@ -260,6 +267,7 @@ class MultiheadAttention(torch.nn.Module):
         # use_rope: bool = True,
         theta: float = 10000,
         max_seq_len: int = 200,
+        dtype: torch.dtype | None = None,
         device: torch.device | None = None,
     ):
         super().__init__()
@@ -293,13 +301,21 @@ class MultiheadAttention(torch.nn.Module):
         self.W_combined = Linear(
             in_features=d_model,
             out_features=3 * num_heads * self.d_k,
+            dtype=dtype,
             device=device,
         )
         self.W_output = Linear(
-            in_features=self.d_k * self.num_heads, out_features=d_model, device=device
+            in_features=self.d_k * self.num_heads,
+            out_features=d_model,
+            dtype=dtype,
+            device=device,
         )
         self.rope = RoPE(
-            theta=theta, d_k=self.d_k, max_seq_len=max_seq_len, device=device
+            theta=theta,
+            d_k=self.d_k,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            device=device,
         )
 
     def forward(
@@ -339,3 +355,41 @@ class MultiheadAttention(torch.nn.Module):
         )
         multihead_attention = self.W_output(concated_attention)
         return multihead_attention
+
+
+class TranformerBlock(torch.nn.Module):
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        theta: float = 10000,
+        max_seq_len: int = 200,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+    ):
+        super().__init__()
+        self.multihead_attention = MultiheadAttention(
+            d_model=d_model,
+            num_heads=num_heads,
+            theta=theta,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            device=device,
+        )
+        self.norm1 = RMSNorm(d_model=d_model, device=device, dtype=dtype)
+        self.ff = SwiGLU(d_model=d_model, d_ff=d_ff, dtype=dtype, device=device)
+        self.norm2 = RMSNorm(d_model=d_model, device=device, dtype=dtype)
+
+    def forward(
+        self, x: Float[torch.Tensor, "... seq d_model"]
+    ) -> Float[torch.Tensor, "... seq d_model"]:
+        dtype = x.dtype
+        device = x.device
+        seq = x.shape[-2]
+        #nevim jestli to takhle stačí
+        positions = torch.arange(seq, dtype=dtype, device=device)
+        x = x + self.multihead_attention(self.norm1(x), positions)
+        x = x + self.ff(self.norm2(x))
+        return x
