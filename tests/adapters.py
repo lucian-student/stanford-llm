@@ -21,6 +21,7 @@ from cs336_basics import (
     MultiheadAttention,
     TranformerBlock,
     TransformerLM,
+    CELosss,
 )
 from einops import rearrange
 
@@ -488,7 +489,7 @@ def run_transformer_lm(
             lm.blocks[i].ff.W2.W.copy_(weights[f"layers.{i}.ffn.w2.weight"])
             lm.blocks[i].ff.W3.W.copy_(weights[f"layers.{i}.ffn.w3.weight"])
             lm.blocks[i].norm2.gain.copy_(weights[f"layers.{i}.ln2.weight"])
-            
+
         lm.norm.gain.copy_(weights["ln_final.weight"])
         lm.output_embedding.W.copy_(weights["lm_head.weight"])
 
@@ -591,7 +592,8 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    loss = CELosss()
+    return loss(inputs, targets)
 
 
 def run_gradient_clipping(

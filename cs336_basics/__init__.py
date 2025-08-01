@@ -14,5 +14,6 @@ from cs336_basics.layers import (
     RoPE,
     MultiheadAttention,
     TranformerBlock,
-    TransformerLM
+    TransformerLM,
 )
+from cs336_basics.loss import CELosss
