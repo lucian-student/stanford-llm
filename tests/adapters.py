@@ -18,7 +18,9 @@ from cs336_basics import (
     Softmax,
     RoPE,
     scaled_dot_product_attention,
+    MultiheadAttention,
 )
+from einops import rearrange
 
 
 def run_linear(
@@ -159,7 +161,28 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    #print("d_model: ", d_model, "num_head: ", num_heads)
+    #print("in_features: ", in_features.shape)
+    #print("W_q: ", q_proj_weight.shape)
+    #print("W_k: ", k_proj_weight.shape)
+    #print("W_v: ", v_proj_weight.shape)
+    #print("W_o: ", o_proj_weight.shape)
+    multi_attention = MultiheadAttention(d_model=d_model, num_heads=num_heads)
+    with torch.no_grad():
+        W_combined = rearrange(
+            torch.stack(
+                [
+                    q_proj_weight,
+                    k_proj_weight,
+                    v_proj_weight,
+                ],
+                dim=0,
+            ),
+            "matrices x y -> (matrices x) y",
+        )
+        multi_attention.W_combined.W.copy_(W_combined)
+        multi_attention.W_output.W.copy_(o_proj_weight)
+    return multi_attention(in_features)
 
 
 def run_multihead_self_attention_with_rope(
@@ -199,7 +222,31 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    multi_attention = MultiheadAttention(
+        d_model=d_model, num_heads=num_heads, max_seq_len=max_seq_len, theta=theta
+    )
+    with torch.no_grad():
+        """
+        Musím přijít na to jak mají vypadat váhy pro dvě používané matice:
+
+        d_k = d_v = d_model
+
+        W_combined: X: ... d_in, OUT: ... (3 * num_heads * d_in), W: (3 * num_heads * d_in , d_in)
+        """
+        W_combined = rearrange(
+            torch.stack(
+                [
+                    q_proj_weight,
+                    k_proj_weight,
+                    v_proj_weight,
+                ],
+                dim=0,
+            ),
+            "matrices x y -> (matrices x) y",
+        )
+        multi_attention.W_combined.W.copy_(W_combined)
+        multi_attention.W_output.W.copy_(o_proj_weight)
+    return multi_attention(in_features, token_positions)
 
 
 def run_rope(

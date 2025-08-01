@@ -1,7 +1,7 @@
 import torch
 from einops import einsum, reduce, rearrange
 import math
-from jaxtyping import Float
+from jaxtyping import Float, Int
 
 
 class Linear(torch.nn.Module):
@@ -15,6 +15,9 @@ class Linear(torch.nn.Module):
         generator: torch.Generator | None = None,
     ):
         super().__init__()
+        """
+        Důvod, proč se využívá transpozice, je protože potom se násobí řádek s řádkem, tím pádem lépe využíváme cache.
+        """
 
         self.W = torch.nn.Parameter(
             torch.zeros(size=(out_features, in_features), dtype=dtype, device=device)
@@ -220,9 +223,119 @@ def scaled_dot_product_attention(
     )
     """
     Proč - nekonečno umožňuje maskovat chtělo by to prozkoumat gradient
+    Můj odhad, že softmax vytvoří nulu, proto tam nepůjde gradient
     """
     if mask is not None:
         QK = torch.where(mask, QK, -torch.inf)
     soft = softmax(QK, dim=-1)
     attention = einsum(soft, V, "... queries values, ... values d_v -> ... queries d_v")
     return attention
+
+
+def batch_cartesian_prod(
+    a: Int[torch.Tensor, "... seq"], b: Int[torch.Tensor, "... seq"]
+):
+    seq = a.shape[-1]
+    cols = b.repeat(*[1 for _ in range(len(b.shape) - 1)], seq)
+    rows = a.unsqueeze(-1)
+    rows = rearrange(
+        rows.repeat(*[1 for _ in range(len(rows.shape) - 1)], seq),
+        "... seq1 seq2 -> ... (seq1 seq2)",
+        seq2=seq,
+    )
+    combined = torch.stack([rows.unsqueeze(-1), cols.unsqueeze(-1)], dim=-1).squeeze(-2)
+    mask = rearrange(
+        combined, "... (seq1 seq2) coords -> ... seq1 seq2 coords", seq2=seq
+    )
+    mask = mask[..., 0] >= mask[..., 1]
+    return mask
+
+
+class MultiheadAttention(torch.nn.Module):
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        # use_rope: bool = True,
+        theta: float = 10000,
+        max_seq_len: int = 200,
+        device: torch.device | None = None,
+    ):
+        super().__init__()
+        """
+        Basicaly máme num_heads matic W_q(emb,d_k),W_k(emb,d_k),W_v(emb,d_v) -> údajně se da je všechny zkombinovat do jedné matice
+        * základní postup máme jednu matici W_q pro všechny hlavy
+        * optimalnější postup W_q,W_k,W_v jsou všechny v jedné matici
+        Máme dále matici W_o(num_heads*d_v,emb), která slouží pro zkombinování více hlav
+        emb je asi d_in
+        
+        mam W_q matici jak vytovřim všechny Q matice najednou
+        chci asi matici Q(n,h * d_k)
+        X(n,emb) W_q(emb,h * d_k) = Q(n,h*d_k)
+        X(n,emb) W_k(emb,h * d_k) = K(n,h*d_k)
+        X(n,emb) W_v(emb,h * d_v) = V(n,h*d_v)
+        Combined(emb,2 * h * d_k + h * d_v) = Comb(n,2 * h * d_k + h * d_v)
+        Potom bude potřeba správně slicovat
+
+        Causal Masking(Nejdřív musím pochopit, co je kauzal masking):
+
+        Důvod je, že při predikci dalšího tokenu bychom neměli vědět o dalších tokenech.
+        * první token je ovlivněn pouze sám sebou
+        * druhý token je ovlivněn sebou a předchozím tokenem
+        Takže musím zkonstruovat masku, která je nad vedlejší diagonálou
+        
+        Aplikace Rope: Rope je aplikované na Query a Key, prý head dimenze má byt batch dimenzí, takže asi nějaký rearrange
+        """
+        # self.use_rope = use_rope
+        self.d_k = d_model // num_heads
+        self.num_heads = num_heads
+        self.W_combined = Linear(
+            in_features=d_model,
+            out_features=3 * num_heads * self.d_k,
+            device=device,
+        )
+        self.W_output = Linear(
+            in_features=self.d_k * self.num_heads, out_features=d_model, device=device
+        )
+        self.rope = RoPE(
+            theta=theta, d_k=self.d_k, max_seq_len=max_seq_len, device=device
+        )
+
+    def forward(
+        self,
+        x: Float[torch.Tensor, "... seq d_in"],
+        token_positions: Int[torch.Tensor, " ... sequence_length"] | None = None,
+    ) -> Float[torch.Tensor, "... seq d_in"]:
+        """
+        Nevim jestli náhodou se může lišit délka sekvence během běhu modelu
+
+        d_in = d_model
+        """
+        device = x.device
+        dtype = x.dtype
+        combined: Float[torch.Tensor, "... seq all"] = self.W_combined(x)
+        # teď je potřeba aplikovat ROPE na query a key
+        combined = rearrange(
+            combined,
+            " ... seq (matrices heads d_k) -> ... matrices heads seq d_k",
+            matrices=3,
+            heads=self.num_heads,
+        )
+        matrices = torch.split(combined, 1, dim=-4)
+        Q, K, V = [m.squeeze(-4) for m in matrices]
+        if token_positions is not None:
+            Q = self.rope(Q, token_positions)
+            K = self.rope(K, token_positions)
+            mask = batch_cartesian_prod(token_positions, token_positions)
+        else:
+            seq = Q.shape[-2]
+            positions = torch.arange(seq, dtype=dtype, device=device)
+            mask = batch_cartesian_prod(positions, positions)
+        attention = scaled_dot_product_attention(Q, K, V, mask)
+        # může být chyba v tom jak jsem to zapojil možná prohodit d_v a heads???? chtělo by to si dát repete ohledně einsum notace
+        concated_attention = rearrange(
+            attention, "... heads seq d_v -> ... seq (heads d_v)"
+        )
+        multihead_attention = self.W_output(concated_attention)
+        return multihead_attention
