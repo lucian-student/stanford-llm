@@ -412,6 +412,7 @@ class TransformerLM(torch.nn.Module):
         device: torch.device | None = None,
     ):
         super().__init__()
+        self.context_length = context_length
         self.embedding = Embeding(
             num_embeddings=vocab_size, embedding_dim=d_model, dtype=dtype, device=device
         )
