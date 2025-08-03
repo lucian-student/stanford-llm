@@ -19,6 +19,8 @@ dependencies = [
     "tqdm>=4.67.1",
     "wandb>=0.19.7",
     "scalene>=1.5.51",
+    "optuna>=4.4.0",
+    "configuration_engine @ git+https://github.com/lucian-student/configuration_engine.git"
 ]
 
 
@@ -55,3 +57,5 @@ extend-select = ["UP"]
 ignore = [
     "F722"
 ]
+
+
