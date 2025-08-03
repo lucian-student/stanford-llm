@@ -5,6 +5,11 @@ from typing import Tuple
 from jaxtyping import Int
 from typing import BinaryIO, IO
 import os
+import yaml
+from dataclasses import dataclass
+import argparse
+from cs336_basics.layers import TransformerLM
+from cs336_basics.optim import AdamW
 
 
 def clip_gradients(
@@ -75,4 +80,16 @@ def load_checkpoint(
         model.load_state_dict(data["model"])
     if "optimizer" in data:
         optimizer.load_state_dict(data["optimizer"])
-    return data.get("iteration",0)
+    return data.get("iteration", 0)
+
+
+@dataclass
+class TrainingArguments:
+    pass
+
+
+def training():
+    """
+    Dostaneme hyperparemtry v yaml souboru.
+    """
+    pass
