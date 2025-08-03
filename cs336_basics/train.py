@@ -3,6 +3,8 @@ from collections.abc import Iterable
 import numpy as np
 from typing import Tuple
 from jaxtyping import Int
+from typing import BinaryIO, IO
+import os
 
 
 def clip_gradients(
@@ -48,3 +50,29 @@ class SequeunceDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return self.length
+
+
+def save_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    iteration: int,
+    out: str | os.PathLike | BinaryIO | IO[bytes],
+):
+    model_dict = model.state_dict()
+    optimizer_dict = optimizer.state_dict()
+    torch.save(
+        {"model": model_dict, "optimizer": optimizer_dict, "iteration": iteration}, out
+    )
+
+
+def load_checkpoint(
+    src: str | os.PathLike | BinaryIO | IO[bytes],
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+):
+    data = torch.load(src)
+    if "model" in data:
+        model.load_state_dict(data["model"])
+    if "optimizer" in data:
+        optimizer.load_state_dict(data["optimizer"])
+    return data.get("iteration",0)
