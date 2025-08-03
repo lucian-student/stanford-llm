@@ -24,6 +24,7 @@ from cs336_basics import (
     CELosss,
     AdamW,
     get_lr_cosine_sheduler,
+    clip_gradients,
 )
 from einops import rearrange
 
@@ -609,7 +610,7 @@ def run_gradient_clipping(
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    clip_gradients(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> type[torch.optim.Optimizer]:
