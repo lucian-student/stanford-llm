@@ -1,12 +1,14 @@
-
 import csv
 import io
 from typing import Dict, Set, Protocol, Iterable, Any
 import os
-from abc import ABC,abstractmethod
+from abc import ABC, abstractmethod
+import yaml
+
 
 def error_message(module: str, action: str, problem: str):
     return f"{module} :: {action} - {problem}"
+
 
 class Logger(ABC):
 
@@ -15,11 +17,12 @@ class Logger(ABC):
         pass
 
     @abstractmethod
-    def log(self,data:Dict):
+    def log(self, data: Dict):
         pass
 
     def close(self):
         self.stream().close()
+
 
 class CSVWriter(Protocol):
     def writerow(self, row: Iterable[Any]) -> Any: ...
@@ -113,3 +116,39 @@ class CSVStringLogger(CSVLogger):
         return self._writer
 
 
+class YamlLogger(Logger):
+
+    def log(self, data: Dict):
+        yaml.dump(
+            data,
+            self.stream(),
+            default_flow_style=False,
+            allow_unicode=True,
+            explicit_start=True,
+        )
+
+
+class YamlStringLogger(YamlLogger):
+
+    def __init__(self):
+        self._stream = io.StringIO()
+
+    def stream(self) -> io.TextIOBase:
+        return self._stream
+
+
+class YamlFileLogger(YamlLogger):
+
+    def __init__(self, path: str):
+        """
+        Throws:
+            OSError
+        """
+        self._stream = open(path, "a")
+
+    def log(self, data):
+        super().log(data)
+        self._stream.flush()
+
+    def stream(self) -> io.TextIOBase:
+        return self._stream
