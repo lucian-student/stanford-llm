@@ -22,5 +22,5 @@ from cs336_basics.train import (
     clip_gradients,
     save_checkpoint,
     load_checkpoint,
-    SequeunceDataset,
 )
+from cs336_basics.dataset import SequenceDataset

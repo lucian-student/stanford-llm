@@ -36,7 +36,7 @@ class AdamW(torch.optim.Optimizer):
         self,
         params,
         lr: float = 1e-3,
-        betas=(0.9, 0, 999),
+        betas=(0.9, 999),
         eps: float = 1e-8,
         weight_decay: float | None = None,
     ):
@@ -77,6 +77,17 @@ class AdamW(torch.optim.Optimizer):
                 state["m1"] = m1
                 state["m2"] = m2
         return loss
+
+
+def adamW_adapter(
+    params,
+    lr: float = 1e-3,
+    beta1=0.9,
+    beta2=0.999,
+    eps: float = 1e-8,
+    weight_decay: float | None = None,
+):
+    return AdamW(params, lr, betas=(beta1, beta2), eps=eps, weight_decay=weight_decay)
 
 
 def get_lr_cosine_sheduler(

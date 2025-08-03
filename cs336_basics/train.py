@@ -10,6 +10,10 @@ from dataclasses import dataclass
 import argparse
 from cs336_basics.layers import TransformerLM
 from cs336_basics.optim import AdamW
+from cs336_basics.configuration import TrainingConfiguration, TrainingSchema
+from pydantic import ValidationError
+from configuration_engine.logging import YamlLogger, CSVLogger
+from uuid import uuid4
 
 
 def clip_gradients(
@@ -59,11 +63,27 @@ def load_checkpoint(
 
 @dataclass
 class TrainingArguments:
-    pass
+    config_path: str
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config_path", required=True)
+    args = parser.parse_args()
+    return TrainingArguments(**vars(args))
 
 
 def experimenting():
     """
     Dostaneme hyperparemtry v yaml souboru.
     """
-    pass
+    args = parse_args()
+    try:
+        with open(args.config_path) as config_file:
+            conf_dict = yaml.safe_load(config_file)
+            schmema = TrainingSchema(**conf_dict)
+            config = schmema.build()
+    except OSError as e:
+        print(e)
+    except ValidationError as e:
+        print(e)

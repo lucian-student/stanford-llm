@@ -9,7 +9,7 @@ from configuration_engine.parameter import (
     ConstantParameter,
 )
 from configuration_engine.configuration import Metadata
-from cs336_basics.dataset import SequeunceDataset
+from cs336_basics.dataset import SequenceDataset
 import optuna
 
 ParameterType = Union[
@@ -30,8 +30,8 @@ class TrainingConfiguration:
         metadata: Metadata,
         additional_parameters: List[NontunableParameter[Any]],
         tuner_parameters: List[NontunableParameter[Any]],
-        training_dataset: SequeunceDataset,
-        validation_dataset: SequeunceDataset,
+        training_dataset: SequenceDataset,
+        validation_dataset: SequenceDataset,
         training_parameters: List[Parameter[Any]],
         model_parameters: List[Parameter[Any]],
         optimizer_parameters: List[Parameter[Any]],
@@ -135,8 +135,8 @@ class TrainingSchema(BaseModel):
             converted_additional_parameters.append(
                 ConstantNontunableParameter(name=key, value=val)
             )
-        train_dataset = SequeunceDataset(**self.train_dataset.model_dump())
-        validation_datset = SequeunceDataset(**self.validation_dataset.model_dump())
+        train_dataset = SequenceDataset(**self.train_dataset.model_dump())
+        validation_datset = SequenceDataset(**self.validation_dataset.model_dump())
         return TrainingConfiguration(
             metadata=self.metadata,
             additional_parameters=converted_additional_parameters,

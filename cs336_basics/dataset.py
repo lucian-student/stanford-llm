@@ -4,7 +4,7 @@ from typing import Tuple
 from jaxtyping import Int
 
 
-class SequeunceDataset(torch.utils.data.Dataset):
+class SequenceDataset(torch.utils.data.Dataset):
 
     def __init__(self, file_path: str, sequence_length: int):
         super().__init__()
