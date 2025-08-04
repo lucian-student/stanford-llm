@@ -20,6 +20,7 @@ from uuid import uuid4
 import optuna
 from cs336_basics.dataset import SequenceDataset
 from cs336_basics.loss import CELosss
+from cs336_basics.torch_utils import torch_setup
 import time
 import tqdm
 
@@ -83,6 +84,7 @@ def parse_args():
 
 
 def train_loop(
+    trial_number: int,
     config: TrainingConfiguration,
     model: TransformerLM,
     sheduler: CosineLRSheduler,
@@ -126,7 +128,6 @@ def train_loop(
     else:
         device = torch.device("cpu")
 
-    iters_checkpoint_current = iters_checkpoint
     model.to(device)
     start = time.time()
     while iter < max_iters:
@@ -156,6 +157,7 @@ def train_loop(
             train_logger.log(
                 {
                     "iter": iter,
+                    "trial_number": trial_number,
                     "train_loss": train_loss.item(),
                     "gradient_norm": norm.item(),
                 }
@@ -177,6 +179,7 @@ def train_loop(
                 metric_logger.log(
                     {
                         "iter": iter,
+                        "trial_number": trial_number,
                         "time": end - start,
                         "train_loss": train_loss_total / (batch_index + 1),
                         "valid_loss": valid_loss_total / len(valid_dataloader),
@@ -190,9 +193,18 @@ def train_loop(
                     optimizer=optimizer,
                     iteration=iter,
                     out=os.path.join(
-                        config.metadata.output_path, f"{run_prefix}-{iter}"
+                        config.metadata.output_path,
+                        f"{trial_number}-{run_prefix}-{iter}",
                     ),
                 )
+        save_checkpoint(
+            model,
+            optimizer=optimizer,
+            iteration=iter,
+            out=os.path.join(
+                config.metadata.output_path, f"{trial_number}-{run_prefix}-{iter}"
+            ),
+        )
     return best_metric
 
 
@@ -244,6 +256,7 @@ def objective(
             "tuner_parameters": safe_tuner_parameters,
             "additional_parameters": {
                 **additional_parameters,
+                "trial_number": trial.number,
             },
             "model_parameters": safe_model_parameters,
             "training_parameters": safe_training_parameters,
@@ -251,6 +264,7 @@ def objective(
         }
     )
     best_val = train_loop(
+        trial_number=trial.number,
         config=config,
         model=model,
         optimizer=optimizer,
@@ -270,6 +284,7 @@ def experimenting():
     """
     Dostaneme hyperparemtry v yaml souboru.
     """
+    torch_setup()
     run_id = str(uuid4())
     print(f"RUN_ID: {run_id}!")
     args = parse_args()
