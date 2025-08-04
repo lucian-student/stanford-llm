@@ -97,8 +97,8 @@ def train_loop(
 ) -> float:
     best_metric: float = 100000000
 
-    iters_checkpoint: int = training_parameters.get("iters_checkpoint", 1000)
-    iters_validation: int = training_parameters.get("validatoin", 2000)
+    iters_checkpoint: int = training_parameters.get("iters_checkpoint", 5000)
+    iters_validation: int = training_parameters.get("iters_validation", 2000)
     batch_size: int = training_parameters.get("batch_size", 0)
     tokens_processed: int = training_parameters.get("tokens_processed", 0)
     context_length: int = model.context_length
@@ -184,15 +184,15 @@ def train_loop(
                 )
                 if valid_loss_total / len(valid_dataloader) < best_metric:
                     best_metric = valid_loss_total / len(valid_dataloader)
-
-        if iter >= iters_checkpoint_current:
-            iters_checkpoint_current += iters_checkpoint
-            save_checkpoint(
-                model,
-                optimizer=optimizer,
-                iteration=iter,
-                out=os.path.join(config.metadata.output_path, f"{run_prefix}-{iter}"),
-            )
+            if iter % iters_checkpoint == 0:
+                save_checkpoint(
+                    model,
+                    optimizer=optimizer,
+                    iteration=iter,
+                    out=os.path.join(
+                        config.metadata.output_path, f"{run_prefix}-{iter}"
+                    ),
+                )
     return best_metric
 
 
