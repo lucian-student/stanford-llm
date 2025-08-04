@@ -160,7 +160,8 @@ class RoPE(torch.nn.Module):
         Bacha na k nevim, co je to za dtype -> mozna to killne celej performance idk
         """
         k = torch.arange(d_k // 2, dtype=dtype, device=device)
-        self.theta = 1.0 / (theta ** (2 * k / d_k))
+        theta = 1.0 / (theta ** (2 * k / d_k))
+        self.register_buffer("theta",theta)
 
     def forward(
         self,

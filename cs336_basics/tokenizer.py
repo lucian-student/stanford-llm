@@ -365,20 +365,21 @@ class Tokenizer:
         Raises
             OSError
         """
+        print("vocab: ", len(self.vocab))
         with open(vocab_filepath, "wb") as vocab_file:
             for id, token in self.vocab.items():
                 word = bytearray()
-                word.extend(len(token).to_bytes(2))
+                word.extend(len(token).to_bytes(2, "little"))
                 word.extend(token)
-                word.extend(id.to_bytes(2))
+                word.extend(id.to_bytes(2, "little"))
                 vocab_file.write(word)
 
         with open(merges_filepath, "wb") as merges_file:
             for a, b in self.merges:
                 pair = bytearray()
-                pair.extend(len(a).to_bytes(2))
+                pair.extend(len(a).to_bytes(2, "little"))
                 pair.extend(a)
-                pair.extend(len(b).to_bytes(2))
+                pair.extend(len(b).to_bytes(2, "little"))
                 pair.extend(b)
                 merges_file.write(pair)
 
@@ -393,14 +394,14 @@ class Tokenizer:
                 token_length_bytes = vocab_file.read(2)
                 if not token_length_bytes:
                     break
-                token_length = int.from_bytes(token_length_bytes)
+                token_length = int.from_bytes(token_length_bytes, "little")
                 token = vocab_file.read(token_length)
                 if not token:
                     break
                 id_bytes = vocab_file.read(2)
                 if not id_bytes:
                     break
-                id = int.from_bytes(id_bytes)
+                id = int.from_bytes(id_bytes, "little")
                 vocab[id] = token
 
         merges: List[Tuple[bytes, bytes]] = []
@@ -409,14 +410,14 @@ class Tokenizer:
                 a_length_bytes = merges_file.read(2)
                 if not a_length_bytes:
                     break
-                a_length = int.from_bytes(a_length_bytes)
+                a_length = int.from_bytes(a_length_bytes, "little")
                 a = merges_file.read(a_length)
                 if not a:
                     break
                 b_length_bytes = merges_file.read(2)
                 if not b_length_bytes:
                     break
-                b_length = int.from_bytes(b_length_bytes)
+                b_length = int.from_bytes(b_length_bytes, "little")
                 b = merges_file.read(b_length)
                 if not b:
                     break
@@ -435,6 +436,7 @@ class Tokenizer:
         Raises:
             OSError
         """
+        print("vocab_size: ", len(self.vocab))
         chunk_boundaries, special_token_positions = self.get_chunk_boundaries(
             input_path, read_size=read_size, num_processes=num_processes
         )
@@ -446,12 +448,12 @@ class Tokenizer:
                 input.seek(start_chunk)
                 chunk = input.read(chunk_length).decode()
                 for id in self.encode_chunk(chunk, pretoken_pattern):
-                    output.write(id.to_bytes(2))
+                    output.write(id.to_bytes(2, "little"))
                 if i < len(special_token_positions):
                     start_token, end_token = special_token_positions[i]
                     token_length = end_token - start_token
                     token = input.read(token_length)
-                    output.write(self.reverse_vocab[token].to_bytes(2))
+                    output.write(self.reverse_vocab[token].to_bytes(2, "little"))
 
     def decode_to_stream(
         self,
@@ -472,7 +474,7 @@ class Tokenizer:
                     break
                 chunk_bytes = bytearray()
                 for i in range(0, len(chunk), 2):
-                    id = int.from_bytes(chunk[i : i + 2])
+                    id = int.from_bytes(chunk[i : i + 2], "little")
                     chunk_bytes.extend(self.vocab[id])
                 ouput.write(chunk_bytes.decode(errors="replace"))
 

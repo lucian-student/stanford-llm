@@ -93,38 +93,52 @@ def train_loop(
 ) -> float:
     best_metric: float = 100000000
 
-    batch_size: int = training_parameters("batch_size", 0)
+    batch_size: int = training_parameters.get("batch_size", 0)
     # single_batch: int = training_parameters.get("single_batch", False)
     tokens_processed: int = training_parameters.get("tokens_processed", 0)
     iters_checkpoint: int = training_parameters.get("iters_checkpoint", 1000)
 
     context_length: int = model.context_length
     max_iters = tokens_processed // (context_length * batch_size)
-
+    print("max_iters: ", max_iters)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True
     )
     valid_dataloader = torch.utils.data.DataLoader(valid_dataset)
     loss_fn = CELosss()
+    if training_parameters.get("cuda", False):
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
 
+    model.to(device)
     start = time.time()
     while iter < max_iters:
         iter += 1
         valid_loss_total = 0
         train_loss_total = 0
         for data, labels in train_dataloader:
+            ##print("data and labels: ",data,labels)
+            data_device: torch.Tensor = data.to(device)
+            labels_device:torch.Tensor = labels.to(device)
             model.train(True)
-            logits: Float[torch.Tensor, "... seq vocab_size"] = model(data)
-            loss = loss_fn(logits, labels)
-            train_loss = loss.mean().backward()
+            logits: Float[torch.Tensor, "... seq vocab_size"] = model(data_device)
+            loss = loss_fn(logits, labels_device)
+            train_loss = loss.mean()
+            train_loss.backward()
             train_loss_total += train_loss
             model.train(False)
+            optimizer.zero_grad()
         # if iter % iters_validate:
         for data, labels in valid_dataloader:
-            logits: Float[torch.Tensor, "... seq vocab_size"] = model(data)
-            loss = loss_fn(logits, labels)
-            valid_loss = loss.mean().backward()
-            valid_loss_total += valid_loss
+            with torch.no_grad():
+                data_device: torch.Tensor = data.to(device)
+                labels_device:torch.Tensor = labels.to(device)
+                logits: Float[torch.Tensor, "... seq vocab_size"] = model(data_device)
+                loss = loss_fn(logits, labels_device)
+                valid_loss = loss.mean()
+                valid_loss.backward()
+                valid_loss_total += valid_loss
         end = time.time()
         metric_logger.log(
             {
@@ -165,7 +179,7 @@ def objective(
         trial
     )
     model = TransformerLM(**model_parameters)
-    optimizer = adamW_adapter(**optimizer_parameters)
+    optimizer = adamW_adapter(model.parameters(), **optimizer_parameters)
     if "checkpoint_path" in additional_parameters:
         iter = load_checkpoint(
             additional_parameters["checkpoint_path"], model, optimizer
@@ -205,6 +219,7 @@ def experimenting():
     Dostaneme hyperparemtry v yaml souboru.
     """
     run_id = str(uuid4())
+    print(f"RUN_ID: {run_id}!")
     args = parse_args()
     try:
         with open(args.config_path) as config_file:
