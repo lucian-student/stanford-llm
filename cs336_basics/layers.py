@@ -161,7 +161,7 @@ class RoPE(torch.nn.Module):
         """
         k = torch.arange(d_k // 2, dtype=dtype, device=device)
         theta = 1.0 / (theta ** (2 * k / d_k))
-        self.register_buffer("theta",theta)
+        self.register_buffer("theta", theta)
 
     def forward(
         self,
@@ -197,6 +197,18 @@ class RoPE(torch.nn.Module):
         )
         res = rearrange(preres, "... seq dk_2 x1 x -> ... seq (dk_2 x1 x)")
         return res
+
+
+def softmax_with_temperature(
+    x: Float[torch.Tensor, "..."], temperature: float, dim: int
+):
+    """
+    Temperatura přidává na diverzitě výstupu modelu, protože čim větší tím větší šance na tokeny s menší pravděpobností
+    """
+    x_temperature = x / temperature
+    x_max = x_temperature.max(dim=dim, keepdim=True)[0]
+    x_exp = torch.exp(x_temperature - x_max)
+    return x_exp / torch.sum(x_exp, dim=dim, keepdim=True)
 
 
 def softmax(x: Float[torch.Tensor, "..."], dim: int):
