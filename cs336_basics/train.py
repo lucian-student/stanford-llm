@@ -7,7 +7,7 @@ import yaml
 from dataclasses import dataclass
 import argparse
 from cs336_basics.layers import TransformerLM
-from cs336_basics.optim import adamW_adapter
+from cs336_basics.optim import adamW_adapter, CosineLRSheduler
 from cs336_basics.configuration import TrainingConfiguration, TrainingSchema
 from pydantic import ValidationError
 from configuration_engine.logging import (
@@ -21,6 +21,7 @@ import optuna
 from cs336_basics.dataset import SequenceDataset
 from cs336_basics.loss import CELosss
 import time
+import tqdm
 
 
 def clip_gradients(
@@ -40,6 +41,7 @@ def clip_gradients(
             if p.grad is None:
                 continue
             p.grad.mul_(max_l2_norm / (norm + eps))
+    return norm
 
 
 def save_checkpoint(
@@ -83,23 +85,36 @@ def parse_args():
 def train_loop(
     config: TrainingConfiguration,
     model: TransformerLM,
+    sheduler: CosineLRSheduler,
     optimizer: torch.optim.Optimizer,
     train_dataset: SequenceDataset,
     valid_dataset: SequenceDataset,
     metric_logger: CSVLogger,
+    train_logger: CSVLogger,
     run_prefix: str,
     iter: int,
     training_parameters,
 ) -> float:
     best_metric: float = 100000000
 
-    batch_size: int = training_parameters.get("batch_size", 0)
-    # single_batch: int = training_parameters.get("single_batch", False)
-    tokens_processed: int = training_parameters.get("tokens_processed", 0)
     iters_checkpoint: int = training_parameters.get("iters_checkpoint", 1000)
-
+    iters_validation: int = training_parameters.get("validatoin", 2000)
+    batch_size: int = training_parameters.get("batch_size", 0)
+    tokens_processed: int = training_parameters.get("tokens_processed", 0)
     context_length: int = model.context_length
+    # tokens_processed 32768000 <class 'int'> batch_size 32 <class 'int'> context_length 256 <class 'int'>
     max_iters = tokens_processed // (context_length * batch_size)
+    print(
+        "tokens_processed",
+        tokens_processed,
+        type(tokens_processed),
+        "batch_size",
+        batch_size,
+        type(batch_size),
+        "context_length",
+        context_length,
+        type(context_length),
+    )
     print("max_iters: ", max_iters)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True
@@ -111,47 +126,67 @@ def train_loop(
     else:
         device = torch.device("cpu")
 
+    iters_checkpoint_current = iters_checkpoint
     model.to(device)
     start = time.time()
     while iter < max_iters:
-        iter += 1
-        valid_loss_total = 0
         train_loss_total = 0
-        for data, labels in train_dataloader:
+        for batch_index, (data, labels) in tqdm.tqdm(
+            enumerate(train_dataloader), total=len(train_dataloader)
+        ):
+            iter += 1
+            if iter >= max_iters:
+                break
             ##print("data and labels: ",data,labels)
             data_device: torch.Tensor = data.to(device)
-            labels_device:torch.Tensor = labels.to(device)
+            labels_device: torch.Tensor = labels.to(device)
             model.train(True)
             logits: Float[torch.Tensor, "... seq vocab_size"] = model(data_device)
             loss = loss_fn(logits, labels_device)
             train_loss = loss.mean()
             train_loss.backward()
-            train_loss_total += train_loss
-            model.train(False)
+            norm = clip_gradients(
+                model.parameters(), training_parameters.get("max_l2_norm", 1.0)
+            )
+            optimizer.step()
+            sheduler.step()
             optimizer.zero_grad()
-        # if iter % iters_validate:
-        for data, labels in valid_dataloader:
-            with torch.no_grad():
-                data_device: torch.Tensor = data.to(device)
-                labels_device:torch.Tensor = labels.to(device)
-                logits: Float[torch.Tensor, "... seq vocab_size"] = model(data_device)
-                loss = loss_fn(logits, labels_device)
-                valid_loss = loss.mean()
-                valid_loss.backward()
-                valid_loss_total += valid_loss
-        end = time.time()
-        metric_logger.log(
-            {
-                "iter": iter,
-                "time": end - start,
-                "train_loss": train_loss_total / len(train_dataloader),
-                "valid_loss": valid_loss_total / len(valid_dataloader),
-            }
-        )
-        if valid_loss_total / len(valid_dataloader) < best_metric:
-            best_metric = valid_loss_total / len(valid_dataloader)
+            train_loss_total += train_loss.item()
+            model.train(False)
+            train_logger.log(
+                {
+                    "iter": iter,
+                    "train_loss": train_loss.item(),
+                    "gradient_norm": norm.item(),
+                }
+            )
 
-        if iter % iters_checkpoint:
+            if iter % iters_validation == 0:
+                valid_loss_total = 0
+                for data, labels in valid_dataloader:
+                    with torch.no_grad():
+                        data_device: torch.Tensor = data.to(device)
+                        labels_device: torch.Tensor = labels.to(device)
+                        logits: Float[torch.Tensor, "... seq vocab_size"] = model(
+                            data_device
+                        )
+                        loss = loss_fn(logits, labels_device)
+                        valid_loss = loss.mean()
+                        valid_loss_total += valid_loss.item()
+                end = time.time()
+                metric_logger.log(
+                    {
+                        "iter": iter,
+                        "time": end - start,
+                        "train_loss": train_loss_total / (batch_index + 1),
+                        "valid_loss": valid_loss_total / len(valid_dataloader),
+                    }
+                )
+                if valid_loss_total / len(valid_dataloader) < best_metric:
+                    best_metric = valid_loss_total / len(valid_dataloader)
+
+        if iter >= iters_checkpoint_current:
+            iters_checkpoint_current += iters_checkpoint
             save_checkpoint(
                 model,
                 optimizer=optimizer,
@@ -167,6 +202,7 @@ def objective(
     schema: TrainingSchema,
     config_logger: YamlLogger,
     metric_logger: CSVLogger,
+    train_logger: CSVLogger,
     run_prefix: str,
 ):
     _, safe_tuner_parameters = config.construct_tuner_parameters()
@@ -186,6 +222,20 @@ def objective(
         )
     else:
         iter = 0
+
+    batch_size: int = training_parameters.get("batch_size", 0)
+    tokens_processed: int = training_parameters.get("tokens_processed", 0)
+    context_length: int = model.context_length
+    max_iters = tokens_processed // (context_length * batch_size)
+    sheduler = CosineLRSheduler(
+        optimizer,
+        cosine_cycle_iters=max_iters
+        * training_parameters.get("cosine_cycle_iters", 1.0),
+        warmup_iters=training_parameters.get("warmup_iters", 500),
+        min_lr=training_parameters.get("min_lr", 0.1)
+        * optimizer_parameters.get("lr", 1e-3),
+        last_epoch=iter - 1,
+    )
     config_logger.log(
         {
             "metadata": config.metadata.model_dump(),
@@ -204,9 +254,11 @@ def objective(
         config=config,
         model=model,
         optimizer=optimizer,
+        sheduler=sheduler,
         train_dataset=config.training_dataset,
         valid_dataset=config.validation_datset,
         metric_logger=metric_logger,
+        train_logger=train_logger,
         run_prefix=run_prefix,
         iter=iter,
         training_parameters=training_parameters,
@@ -236,6 +288,12 @@ def experimenting():
                 config.metadata.output_path, f"{config.metadata.name}-{run_id}.csv"
             )
         )
+        train_logger = CSVFileLogger(
+            os.path.join(
+                config.metadata.output_path,
+                f"{config.metadata.name}-train-{run_id}.csv",
+            )
+        )
         tuner_paramaters, _ = config.construct_tuner_parameters()
         study = optuna.create_study(direction="minimize")
         study.optimize(
@@ -245,6 +303,7 @@ def experimenting():
                 schema,
                 config_logger,
                 metric_logger,
+                train_logger,
                 f"{config.metadata.name}-{run_id}",
             ),
             **tuner_paramaters,

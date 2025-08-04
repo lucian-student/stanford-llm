@@ -41,6 +41,7 @@ class AdamW(torch.optim.Optimizer):
         weight_decay: float | None = None,
     ):
         defaults = {
+            "max_lr":lr,
             "lr": lr,
             "betas": betas,
             "eps": eps,
@@ -111,8 +112,27 @@ def get_lr_cosine_sheduler(
 
 class CosineLRSheduler(torch.optim.lr_scheduler._LRScheduler):
 
-    def __init__(self, optimizer, last_epoch=-1):
-        super().__init__(optimizer, last_epoch, "deprecated")
+    def __init__(
+        self,
+        optimizer,
+        min_lr: float,
+        warmup_iters: int,
+        cosine_cycle_iters: int,
+        last_epoch=-1,
+    ):
+        self.min_lr = min_lr
+        self.warmup_iters = warmup_iters
+        self.cosine_cycle_iters = cosine_cycle_iters
+        super().__init__(optimizer, last_epoch)
 
-    def get_lr(self) -> float:
-        pass
+    def get_lr(self):
+        return [
+            get_lr_cosine_sheduler(
+                self.last_epoch,
+                group["max_lr"],
+                self.min_lr,
+                self.warmup_iters,
+                self.cosine_cycle_iters,
+            )
+            for group in self.optimizer.param_groups
+        ]
