@@ -23,6 +23,7 @@ from cs336_basics.loss import CELosss
 from cs336_basics.torch_utils import torch_setup
 import time
 import tqdm
+import math
 
 
 def clip_gradients(
@@ -145,6 +146,7 @@ def train_loop(
             logits: Float[torch.Tensor, "... seq vocab_size"] = model(data_device)
             loss = loss_fn(logits, labels_device)
             train_loss = loss.mean()
+            batch_perplexity = torch.exp(train_loss)
             train_loss.backward()
             norm = clip_gradients(
                 model.parameters(), training_parameters.get("max_l2_norm", 1.0)
@@ -160,6 +162,7 @@ def train_loop(
                     "trial_number": trial_number,
                     "train_loss": train_loss.item(),
                     "gradient_norm": norm.item(),
+                    "batch_perplexity": batch_perplexity,
                 }
             )
 
@@ -183,6 +186,12 @@ def train_loop(
                         "time": end - start,
                         "train_loss": train_loss_total / (batch_index + 1),
                         "valid_loss": valid_loss_total / len(valid_dataloader),
+                        "train_perplexity": math.exp(
+                            train_loss_total / (batch_index + 1)
+                        ),
+                        "valid_perplexity": math.exp(
+                            valid_loss_total / len(valid_dataloader)
+                        ),
                     }
                 )
                 if valid_loss_total / len(valid_dataloader) < best_metric:
