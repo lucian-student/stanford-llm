@@ -98,6 +98,9 @@ def train_loop(
     iter: int,
     training_parameters,
 ) -> float:
+    """
+    Důležitý je ukádáat parametry a optimizer state v 32flaot
+    """
     best_metric: float = 100000000
 
     iters_checkpoint: int = training_parameters.get("iters_checkpoint", 5000)
@@ -145,7 +148,8 @@ def train_loop(
             data_device: torch.Tensor = data.to(device)
             labels_device: torch.Tensor = labels.to(device)
             model.train(True)
-            logits: Float[torch.Tensor, "... seq vocab_size"] = model(data_device)
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):  
+                logits: Float[torch.Tensor, "... seq vocab_size"] = model(data_device)
             loss = loss_fn(logits, labels_device)
             train_loss = loss.mean()
             batch_perplexity = torch.exp(train_loss)
@@ -164,7 +168,7 @@ def train_loop(
                     "trial_number": trial_number,
                     "train_loss": train_loss.item(),
                     "gradient_norm": norm.item(),
-                    "batch_perplexity": batch_perplexity,
+                    "batch_perplexity": batch_perplexity.item(),
                 }
             )
 
@@ -174,9 +178,10 @@ def train_loop(
                     with torch.no_grad():
                         data_device: torch.Tensor = data.to(device)
                         labels_device: torch.Tensor = labels.to(device)
-                        logits: Float[torch.Tensor, "... seq vocab_size"] = model(
-                            data_device
-                        )
+                        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                            logits: Float[torch.Tensor, "... seq vocab_size"] = model(
+                                data_device
+                            )
                         loss = loss_fn(logits, labels_device)
                         valid_loss = loss.mean()
                         valid_loss_total += valid_loss.item()

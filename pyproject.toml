@@ -21,7 +21,7 @@ dependencies = [
     "torch",
     "torchvision",
     "torchaudio",
-    "configuration_engine @ git+https://github.com/lucian-student/configuration_engine.git"
+    "configuration_engine @ git+https://github.com/lucian-student/configuration_engine.git",
 ]
 
 

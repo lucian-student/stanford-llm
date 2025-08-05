@@ -18,8 +18,9 @@ class CELosss(torch.nn.Module):
             * jmenovatel je log(sum(exp)) -> asi se nic nepokrátí
         3. nakonec mean(-log(softmax))
         """
-        x_max = x.max(dim=-1, keepdim=True)[0]
-        x_stabilized = x - x_max
-        numerator = torch.gather(x_stabilized,dim=-1,index=y.unsqueeze(-1)).squeeze(-1)
-        denominator = torch.log(torch.sum(torch.exp(x_stabilized), dim=-1))
-        return torch.mean(denominator - numerator, dim=-1)
+        with torch.autocast(x.device.type,enabled=False):
+            x_max = x.max(dim=-1, keepdim=True)[0]
+            x_stabilized = x - x_max
+            numerator = torch.gather(x_stabilized,dim=-1,index=y.unsqueeze(-1)).squeeze(-1)
+            denominator = torch.log(torch.sum(torch.exp(x_stabilized), dim=-1))
+            return torch.mean(denominator - numerator, dim=-1)

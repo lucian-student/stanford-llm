@@ -85,14 +85,15 @@ class RMSNorm(torch.nn.Module):
         )
 
     def forward(self, x: Float[torch.Tensor, "... d_model"]):
-        dtype = x.dtype
-        casted = x.to(torch.float32)
-        mean_squared = (
-            (1 / self.d_model) * reduce(casted**2, "... d_model -> ...", "sum")
-        ) + self.eps
-        res = casted * self.gain
-        res = res / rearrange(torch.sqrt(mean_squared), "... -> ... 1")
-        return res.to(dtype)
+        with torch.autocast(device_type=x.device.type,enabled=False):
+            dtype = x.dtype
+            casted = x.to(torch.float32)
+            mean_squared = (
+                (1 / self.d_model) * reduce(casted**2, "... d_model -> ...", "sum")
+            ) + self.eps
+            res = casted * self.gain
+            res = res / rearrange(torch.sqrt(mean_squared), "... -> ... 1")
+            return res.to(dtype)
 
 
 class SiLU(torch.nn.Module):
@@ -142,6 +143,11 @@ class SwiGLU(torch.nn.Module):
     def forward(
         self, x: Float[torch.Tensor, "... d_model"]
     ) -> Float[torch.Tensor, "... d_model"]:
+        """
+        silu sigmoid(x) * x -> říká kolik projde dál z dané transformace
+        W1 -> linearní vrstvá která je gatovaná silu -> nevim podle mě docela neintuitivní ale asi to nějak funguje
+        W2 -> vrací zpět na dmodel(kvůli tomu aby mezi vrstva byla velká a měla velkou vyjadřovací schopnost)
+        """
         return self.W2(self.silu(self.W1(x)) * self.W3(x))
 
 
@@ -207,7 +213,9 @@ def exclusive_cumsum(x: Float[torch.Tensor, "..."], dim: int):
     return torch.cumsum(rolled, dim=dim)
 
 
-def top_p_sampling(x: Float[torch.Tensor, "..."], p: float, dim=int) -> Float[torch.Tensor, "..."]:
+def top_p_sampling(
+    x: Float[torch.Tensor, "..."], p: float, dim=int
+) -> Float[torch.Tensor, "..."]:
     """
     Inplace operace
     Potřebujeme najít nejmenší množinu jejíž pravděpobnost je větší než p
@@ -215,9 +223,9 @@ def top_p_sampling(x: Float[torch.Tensor, "..."], p: float, dim=int) -> Float[to
     sorted, indices = torch.sort(x, dim=dim, descending=True)
     cdf = exclusive_cumsum(sorted, dim)
     mask = cdf > p
-    full_mask = torch.zeros_like(indices,dtype=torch.bool)
-    full_mask.scatter_(dim=dim,index=indices,src=mask)
-    return torch.masked_fill(x,full_mask,0)
+    full_mask = torch.zeros_like(indices, dtype=torch.bool)
+    full_mask.scatter_(dim=dim, index=indices, src=mask)
+    return torch.masked_fill(x, full_mask, 0)
 
 
 def softmax_with_temperature(
@@ -233,9 +241,10 @@ def softmax_with_temperature(
 
 
 def softmax(x: Float[torch.Tensor, "..."], dim: int):
-    x_max = x.max(dim=dim, keepdim=True)[0]
-    x_exp = torch.exp(x - x_max)
-    return x_exp / torch.sum(x_exp, dim=dim, keepdim=True)
+    with torch.autocast(device_type=x.device.type, enabled=False):
+        x_max = x.max(dim=dim, keepdim=True)[0]
+        x_exp = torch.exp(x - x_max)
+        return x_exp / torch.sum(x_exp, dim=dim, keepdim=True)
 
 
 class Softmax(torch.nn.Module):
