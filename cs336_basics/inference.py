@@ -4,7 +4,7 @@ from cs336_basics.train import load_checkpoint
 from cs336_basics.configuration import TrainingSchema
 import yaml
 from pydantic import ValidationError
-from cs336_basics.layers import TransformerLM, softmax_with_temperature
+from cs336_basics.layers import TransformerLM, softmax_with_temperature, top_p_sampling
 from cs336_basics.optim import AdamW
 from cs336_basics.tokenizer import Tokenizer
 from typing import Literal, List
@@ -22,6 +22,7 @@ class InferenceArguments:
     device: Literal["cuda", "cpu"]
     special_token: str
     temperature: float
+    probability: float
 
 
 def parse_arguments() -> InferenceArguments:
@@ -33,7 +34,8 @@ def parse_arguments() -> InferenceArguments:
     parser.add_argument("-V", "--vocab_path", required=True)
     parser.add_argument("-d", "--device", default="cuda", choices=["cuda", "cpu"])
     parser.add_argument("-s", "--special_token", default="<|endoftext|>")
-    parser.add_argument("-t", "--temperature",type=float, default=0.5)
+    parser.add_argument("-t", "--temperature", type=float, default=0.5)
+    parser.add_argument("-P", "--probability", type=float, default=0.5)
     args = parser.parse_args()
     return InferenceArguments(**vars(args))
 
@@ -42,6 +44,7 @@ def decodeText(
     device_str: str,
     special_token: str,
     temperature: float,
+    probabiliy: float,
     tokenizer: Tokenizer,
     model: TransformerLM,
     prompt: str,
@@ -60,23 +63,23 @@ def decodeText(
             proba: Float[torch.Tensor, "vocab_size"] = softmax_with_temperature(
                 last_logit, temperature, dim=-1
             )
-            """
-            """
+            top_p = top_p_sampling(
+                proba,p=0.1,dim=0
+            )
+            normalized_top_p = top_p/torch.sum(top_p)
             select = torch.rand(1, device=device, dtype=torch.float32).item()
-            cdf = proba.cumsum(dim=0)
+            cdf = normalized_top_p.cumsum(dim=0)
             mask = cdf > select
             selected_index = torch.nonzero(mask)[0].item()
             output_tokens.append(selected_index)
             current_tokens = torch.cat(
                 [
                     current_tokens,
-                    torch.tensor(
-                        [selected_index], dtype=torch.long, device=device
-                    ),
+                    torch.tensor([selected_index], dtype=torch.long, device=device),
                 ],
                 dim=0,
             )
-            if tokenizer.vocab[selected_index].decode() == special_token:
+            if tokenizer.vocab[selected_index] == special_token.encode():
                 break
     return tokenizer.decode(output_tokens[:-1])
 
@@ -98,7 +101,13 @@ def inference():
         with open(args.prompt_path) as prompt_file:
             prompt = prompt_file.read() + args.special_token
         answer = decodeText(
-            args.device, args.special_token, args.temperature, tokenizer, model, prompt
+            args.device,
+            args.special_token,
+            args.temperature,
+            args.probability,
+            tokenizer,
+            model,
+            prompt,
         )
         print(answer)
     except OSError as e:

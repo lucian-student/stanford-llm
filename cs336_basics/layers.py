@@ -199,6 +199,27 @@ class RoPE(torch.nn.Module):
         return res
 
 
+def exclusive_cumsum(x: Float[torch.Tensor, "..."], dim: int):
+    rolled = torch.roll(x, 1, dims=dim)
+    select = [slice(None)] * x.dim()
+    select[dim] = 0
+    rolled[select] = 0
+    return torch.cumsum(rolled, dim=dim)
+
+
+def top_p_sampling(x: Float[torch.Tensor, "..."], p: float, dim=int) -> Float[torch.Tensor, "..."]:
+    """
+    Inplace operace
+    Potřebujeme najít nejmenší množinu jejíž pravděpobnost je větší než p
+    """
+    sorted, indices = torch.sort(x, dim=dim, descending=True)
+    cdf = exclusive_cumsum(sorted, dim)
+    mask = cdf > p
+    full_mask = torch.zeros_like(indices,dtype=torch.bool)
+    full_mask.scatter_(dim=dim,index=indices,src=mask)
+    return torch.masked_fill(x,full_mask,0)
+
+
 def softmax_with_temperature(
     x: Float[torch.Tensor, "..."], temperature: float, dim: int
 ):
