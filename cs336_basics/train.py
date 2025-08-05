@@ -131,11 +131,13 @@ def train_loop(
 
     model.to(device)
     start = time.time()
+    train_loss_total = 0
+    batches = 0
     while iter < max_iters:
-        train_loss_total = 0
-        for batch_index, (data, labels) in tqdm.tqdm(
+        for _, (data, labels) in tqdm.tqdm(
             enumerate(train_dataloader), total=len(train_dataloader)
         ):
+            batches+=1
             iter += 1
             if iter >= max_iters:
                 break
@@ -184,16 +186,18 @@ def train_loop(
                         "iter": iter,
                         "trial_number": trial_number,
                         "time": end - start,
-                        "train_loss": train_loss_total / (batch_index + 1),
+                        "train_loss": train_loss_total / batches,
                         "valid_loss": valid_loss_total / len(valid_dataloader),
                         "train_perplexity": math.exp(
-                            train_loss_total / (batch_index + 1)
+                            train_loss_total / batches
                         ),
                         "valid_perplexity": math.exp(
                             valid_loss_total / len(valid_dataloader)
                         ),
                     }
                 )
+                batches = 0
+                train_loss_total = 0
                 if valid_loss_total / len(valid_dataloader) < best_metric:
                     best_metric = valid_loss_total / len(valid_dataloader)
             if iter % iters_checkpoint == 0:
