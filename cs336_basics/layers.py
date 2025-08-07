@@ -144,8 +144,11 @@ class SwiGLU(torch.nn.Module):
         self, x: Float[torch.Tensor, "... d_model"]
     ) -> Float[torch.Tensor, "... d_model"]:
         """
-        silu sigmoid(x) * x -> říká kolik projde dál z dané transformace
-        W1 -> linearní vrstvá která je gatovaná silu -> nevim podle mě docela neintuitivní ale asi to nějak funguje
+        silu sigmoid(x) * x -> říká kolik projde dál z dané 
+        * prej, že by pro optimalizaci by hola být implementovaná pomocí lookup tabulek
+        * to bylo zmíněno v přednáškách: https://www.youtube.com/watch?v=ptFiH_bHnJw&t=1262s
+        W1 -> linearní vrstvá která využívá silu aktivační funkci
+        W3 -> gatovací váhy, určující kolik W1 po aktivaci projde dál
         W2 -> vrací zpět na dmodel(kvůli tomu aby mezi vrstva byla velká a měla velkou vyjadřovací schopnost)
         """
         return self.W2(self.silu(self.W1(x)) * self.W3(x))
@@ -161,6 +164,9 @@ class RoPE(torch.nn.Module):
         dtype: torch.dtype | None = None,
         device=None,
     ):
+        """
+        využívá, že skalární součin je invariantní vůči rotaci, což dává smysl z této rovnice cos(\alpha) = |u||v|<u|v>
+        """
         super().__init__()
         """
         Bacha na k nevim, co je to za dtype -> mozna to killne celej performance idk
