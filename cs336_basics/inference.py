@@ -34,8 +34,8 @@ def parse_arguments() -> InferenceArguments:
     parser.add_argument("-V", "--vocab_path", required=True)
     parser.add_argument("-d", "--device", default="cuda", choices=["cuda", "cpu"])
     parser.add_argument("-s", "--special_token", default="<|endoftext|>")
-    parser.add_argument("-t", "--temperature", type=float, default=0.5)
-    parser.add_argument("-P", "--probability", type=float, default=0.5)
+    parser.add_argument("-t", "--temperature", type=float, default=1.0)
+    parser.add_argument("-P", "--probability", type=float, default=1.0)
     args = parser.parse_args()
     return InferenceArguments(**vars(args))
 

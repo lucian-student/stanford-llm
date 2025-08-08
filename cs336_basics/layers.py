@@ -85,7 +85,7 @@ class RMSNorm(torch.nn.Module):
         )
 
     def forward(self, x: Float[torch.Tensor, "... d_model"]):
-        with torch.autocast(device_type=x.device.type,enabled=False):
+        with torch.autocast(device_type=x.device.type, enabled=False):
             dtype = x.dtype
             casted = x.to(torch.float32)
             mean_squared = (
@@ -144,7 +144,7 @@ class SwiGLU(torch.nn.Module):
         self, x: Float[torch.Tensor, "... d_model"]
     ) -> Float[torch.Tensor, "... d_model"]:
         """
-        silu sigmoid(x) * x -> říká kolik projde dál z dané 
+        silu sigmoid(x) * x -> říká kolik projde dál z dané
         * prej, že by pro optimalizaci by hola být implementovaná pomocí lookup tabulek
         * to bylo zmíněno v přednáškách: https://www.youtube.com/watch?v=ptFiH_bHnJw&t=1262s
         W1 -> linearní vrstvá která využívá silu aktivační funkci
@@ -461,7 +461,9 @@ class TransformerLM(torch.nn.Module):
         device: torch.device | None = None,
     ):
         super().__init__()
+        self.d_model = d_model
         self.context_length = context_length
+        self.vocab_size = vocab_size
         self.embedding = Embeding(
             num_embeddings=vocab_size, embedding_dim=d_model, dtype=dtype, device=device
         )

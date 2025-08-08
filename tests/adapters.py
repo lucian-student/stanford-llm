@@ -21,7 +21,7 @@ from cs336_basics import (
     MultiheadAttention,
     TranformerBlock,
     TransformerLM,
-    CELosss,
+    CELoss,
     AdamW,
     get_lr_cosine_sheduler,
     clip_gradients,
@@ -597,7 +597,7 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    loss = CELosss()
+    loss = CELoss()
     return loss(inputs, targets)
 
 

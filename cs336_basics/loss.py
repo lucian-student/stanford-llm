@@ -1,7 +1,7 @@
 import torch
 from jaxtyping import Float, Int
 
-class CELosss(torch.nn.Module):
+class CELoss(torch.nn.Module):
 
     def __init__(self):
         super().__init__()

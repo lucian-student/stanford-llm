@@ -1,0 +1,8 @@
+model_parameters:
+  context_length: 256
+  d_ff: 1344
+  d_model: 512
+  num_heads: 16
+  num_layers: 4
+  rope_theta: 10000
+  vocab_size: 10000

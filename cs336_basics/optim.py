@@ -36,12 +36,12 @@ class AdamW(torch.optim.Optimizer):
         self,
         params,
         lr: float = 1e-3,
-        betas=(0.9, 999),
+        betas=(0.9, 0.999),
         eps: float = 1e-8,
-        weight_decay: float | None = None,
+        weight_decay: float = 0.0,
     ):
         defaults = {
-            "max_lr":lr,
+            "max_lr": lr,
             "lr": lr,
             "betas": betas,
             "eps": eps,

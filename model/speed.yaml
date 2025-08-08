@@ -1,0 +1,44 @@
+metadata:
+  name: "testing"
+  output_path: /home/fikus/stanford/stanford-llm/output/compile
+  seed: 22
+train_dataset:
+  file_path: /home/fikus/stanford/stanford-llm/data/TinyStoriesV2-GPT4-train.tok
+  sequence_length: 256
+validation_dataset:
+  file_path: /home/fikus/stanford/stanford-llm/data/TinyStoriesV2-GPT4-valid.tok
+  sequence_length: 256
+additional_parameters:
+  dummy: 0
+  #checkpoint_path, pokud je přitomná, tak se ignorují parametry modelu a optimizeru
+  #checkpoint_path: str
+tuner_parameters:
+  n_trials: 1
+training_parameters:
+  batch_size: 32
+  single_batch: false
+  tokens_processed: 163840000
+  iters_checkpoint: 5000
+  iters_validation: 2500
+  cuda: true
+  max_l2_norm: 1.0
+  #koeficient
+  cosine_cycle_iters: 1.0
+  #kroky
+  warmup_iters: 500
+  #koeficient
+  min_lr: 0.01
+model_parameters:
+  vocab_size: 10000
+  context_length: 256
+  num_layers: 4
+  d_model: 512
+  num_heads: 16
+  d_ff: 1344
+  rope_theta: 10000
+optimizer_parameters:
+  lr: 1.0e-3
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-8
+  weight_decay: 0.01

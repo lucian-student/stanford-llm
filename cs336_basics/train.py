@@ -19,7 +19,7 @@ from configuration_engine.logging import (
 from uuid import uuid4
 import optuna
 from cs336_basics.dataset import SequenceDataset
-from cs336_basics.loss import CELosss
+from cs336_basics.loss import CELoss
 from cs336_basics.torch_utils import torch_setup
 import time
 import tqdm
@@ -126,13 +126,14 @@ def train_loop(
         train_dataset, batch_size=batch_size, shuffle=True
     )
     valid_dataloader = torch.utils.data.DataLoader(valid_dataset)
-    loss_fn = CELosss()
+    loss_fn = CELoss()
     if training_parameters.get("cuda", False):
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
 
     model.to(device)
+    model = torch.compile(model, mode="default", fullgraph=True)
     start = time.time()
     train_loss_total = 0
     batches = 0
